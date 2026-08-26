@@ -98,6 +98,8 @@ from modules.collection import (
 from modules.media import (
     media_search,
     media_get_details,
+    media_get_episodes,
+    media_get_next_unwatched_episode,
     media_edit_metadata,
     media_delete,
     media_get_artwork,
