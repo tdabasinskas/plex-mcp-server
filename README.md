@@ -132,6 +132,9 @@ Tools for searching, inspecting, and editing specific media items.
 | `media_get_artwork` | Retrieve posters or background artwork. | `media_title`, `library_name`, `art_type: str` |
 | `media_set_artwork` | Set artwork from a local path or URL. | `media_title`, `library_name`, `poster_path`, `poster_url`, `background_path`, `background_url` |
 | `media_list_available_artwork` | List alternative artwork available for selection. | `media_title`, `library_name`, `art_type` |
+| `media_get_match` | Show an item's current match (guid, agent, external IDs) and candidate matches to (re)match to. | `media_title`, `library_name`, `media_id`, `search_title`, `search_year`, `search_agent` |
+| `media_fix_match` | (Re)match an item to a candidate `guid`, or `auto`-match to the agent's top pick. | `media_title`, `library_name`, `media_id`, `guid`, `auto`, `search_agent` |
+| `media_unmatch` | Remove the current metadata match, leaving the item unmatched. | `media_title`, `library_name`, `media_id` |
 
 ### Playlist Module
 Manage your personal and shared playlists.
