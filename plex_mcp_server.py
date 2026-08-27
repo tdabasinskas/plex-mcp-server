@@ -104,6 +104,12 @@ from modules.media import (
     media_set_artwork,
     media_list_available_artwork  
 )  
+# Match module functions
+from modules.match import (
+    media_get_match,
+    media_fix_match,
+    media_unmatch
+)
 # Client module functions
 from modules.client import (
     client_list, 
