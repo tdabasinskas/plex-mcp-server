@@ -816,6 +816,23 @@ async def library_get_contents(
         return json.dumps({"error": f"Error getting library contents: {str(e)}"})
 
 
+def _operator_suffix(operator):
+    """Translate a Plex server operator key into the suffix plexapi expects.
+
+    Plex's URL form and plexapi's filter-dict form differ by one trailing '=':
+    the server calls "is" ``==`` while plexapi wants ``title=``, and the server
+    calls "contains" ``=`` while plexapi wants a bare ``title`` with no suffix.
+    Handing out the raw server key makes a caller asking for "contains" get an
+    exact match instead, silently. Strip the trailing '=' and report the
+    server's own title so the caller can append what it is given verbatim.
+    """
+    key = operator.key or ''
+    return {
+        "suffix": key[:-1] if key.endswith('=') else key,
+        "means": operator.title
+    }
+
+
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def library_get_smart_filter_options(library_name: str, field: str = None, libtype: str = None) -> str:
     """Discover the filter and sort options for building a smart playlist or smart collection in a library.
@@ -883,7 +900,7 @@ async def library_get_smart_filter_options(library_name: str, field: str = None,
             fields_out = []
             for f in ft.fields:
                 try:
-                    operators = [o.key for o in section.listOperators(f.type)]
+                    operators = [_operator_suffix(o) for o in section.listOperators(f.type)]
                 except Exception:
                     operators = []
                 fields_out.append({
@@ -914,8 +931,10 @@ async def library_get_smart_filter_options(library_name: str, field: str = None,
             "usage": (
                 "Pass filters to playlist_create_smart / collection_create_smart as a dict, e.g. "
                 '{"genre": "Comedy", "year>>": 2000, "unwatched": true}. '
-                "Append an operator suffix from a field's 'operators' list to the field name for "
-                "comparisons (e.g. 'year>>' means after that year). To filter on a type other than "
+                "Append an operator's 'suffix' from a field's 'operators' list to the field name, "
+                "verbatim (e.g. 'year>>' means after that year). An empty suffix is a real operator, "
+                "not the absence of one: on a string field it means 'contains', so 'title' matches "
+                "substrings while 'title=' is an exact match. To filter on a type other than "
                 "the library default, use the fully-qualified key (e.g. 'artist.title', "
                 "'track.userRating>>'). Call this tool again with a 'field' argument to list the "
                 "valid values for a tag field. Sort options are limited to what Plex exposes per "

@@ -235,31 +235,15 @@ async def media_get_details(media_title: str = None, media_id: int = None, libra
             if library_name:
                 try:
                     target_section = plex.library.section(library_name)
-                    results = target_section.search(query=media_title)
+                except NotFound:
+                    return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+                try:
+                    results = plex.search(query=media_title, sectionId=target_section.key)
                 except Exception as e:
                     return json.dumps({"status": "error", "message": f"Error searching library '{library_name}': {str(e)}"}, indent=4)
             else:
-                # Search in all libraries, including specific searches for music content
+                # Hub search already spans every library and every type, music included.
                 results = plex.search(query=media_title)
-                
-                # If no results or we want to specifically check music libraries
-                if not results or any(word in media_title.lower() for word in ['song', 'track', 'album', 'artist', 'music']):
-                    # Get all music libraries
-                    music_libraries = [section for section in plex.library.sections() if section.type == 'artist']
-                    
-                    # Search in each music library
-                    for library in music_libraries:
-                        # Try searching for tracks
-                        track_results = library.search(query=media_title, libtype='track')
-                        results.extend(track_results)
-                        
-                        # Try searching for albums
-                        album_results = library.search(query=media_title, libtype='album')
-                        results.extend(album_results)
-                        
-                        # Try searching for artists
-                        artist_results = library.search(query=media_title, libtype='artist')
-                        results.extend(artist_results)
             
             if not results:
                 return json.dumps({"error": f"No media found matching '{media_title}'."}, indent=4)
@@ -550,11 +534,14 @@ async def media_edit_metadata(media_title: str, library_name: str = None,
         if library_name:
             try:
                 library = plex.library.section(library_name)
-                results = library.search(query=media_title)
             except NotFound:
                 return f"Library '{library_name}' not found."
+            try:
+                results = plex.search(query=media_title, sectionId=library.key)
+            except Exception as e:
+                return f"Error searching library '{library_name}': {str(e)}"
         else:
-                results = plex.search(query=media_title)
+            results = plex.search(query=media_title)
         
         if not results:
             return f"No media found matching '{media_title}'."
@@ -719,9 +706,12 @@ async def media_get_artwork(media_title: str = None, media_id: int = None, libra
             if library_name:
                 try:
                     library = plex.library.section(library_name)
-                    results = library.search(query=media_title)
                 except NotFound:
                     return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+                try:
+                    results = plex.search(query=media_title, sectionId=library.key)
+                except Exception as e:
+                    return json.dumps({"error": f"Error searching library '{library_name}': {str(e)}"}, indent=4)
             else:
                 # Search in all libraries
                 results = plex.search(query=media_title)
@@ -909,9 +899,12 @@ async def media_delete(media_title: str = None, media_id: int = None, library_na
             if library_name:
                 try:
                     library = plex.library.section(library_name)
-                    results = library.search(query=media_title)
                 except NotFound:
                     return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+                try:
+                    results = plex.search(query=media_title, sectionId=library.key)
+                except Exception as e:
+                    return json.dumps({"error": f"Error searching library '{library_name}': {str(e)}"}, indent=4)
             else:
                 # Search in all libraries
                 results = plex.search(query=media_title)
@@ -1066,9 +1059,12 @@ async def media_set_artwork(media_title: str, library_name: str = None,
         if library_name:
             try:
                 library = plex.library.section(library_name)
-                results = library.search(query=media_title)
             except NotFound:
                 return f"Library '{library_name}' not found."
+            try:
+                results = plex.search(query=media_title, sectionId=library.key)
+            except Exception as e:
+                return f"Error searching library '{library_name}': {str(e)}"
         else:
             results = plex.search(query=media_title)
         
@@ -1158,9 +1154,12 @@ async def media_list_available_artwork(media_title: str = None, media_id: int = 
             if library_name:
                 try:
                     library = plex.library.section(library_name)
-                    results = library.search(query=media_title)
                 except NotFound:
                     return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+                try:
+                    results = plex.search(query=media_title, sectionId=library.key)
+                except Exception as e:
+                    return json.dumps({"error": f"Error searching library '{library_name}': {str(e)}"}, indent=4)
             else:
                 results = plex.search(query=media_title)
             
