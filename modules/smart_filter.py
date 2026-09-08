@@ -192,14 +192,17 @@ def _query_is_decoded(query):
 
 
 def _with_literal_query(raw):
-    """Return the URI with its query in decoded, splittable form.
+    """Return the URI with its query in splittable form.
 
-    Plex hands back ``content`` at varying levels of encoding: sometimes plain,
-    sometimes with the '?' as %3F, and sometimes with a literal '?' but the body
-    still encoded. The last is the dangerous one - a literal '?' makes the URI
-    look parseable while the query is a single opaque segment, so parameter
-    surgery silently appends instead of replacing and every filter clause is lost
-    when Plex decodes it. Decode until the query actually splits.
+    Plex hands back ``content`` at varying levels of encoding, and finding the
+    query means decoding until it splits. But when the whole URI is encoded once
+    uniformly, that same decode also unescapes the *values* - a having clause
+    stored as ``min%28...%29`` comes back as ``min(...)``. Writing that back
+    literally is fatal: Plex cannot parse a having clause with raw parentheses
+    and silently drops the entire filter, matching the whole library.
+
+    So every segment written back is normalized to one level of encoding
+    regardless of how it arrived. See ``_canonical_segment``.
     """
     for _ in range(4):
         head, sep, query = raw.partition('?')
@@ -212,6 +215,25 @@ def _with_literal_query(raw):
     return raw
 
 
+def _canonical_segment(segment):
+    """Normalize one ``key=value`` pair to exactly one level of encoding.
+
+    Decode fully, then encode once. Applied to every segment whatever shape the
+    saved URI arrived in, so the result is the same string either way - which is
+    what the explicit-filters path produces through urlencode, and what Plex
+    accepts. Splitting has already happened, so decoding a value here cannot
+    disturb the separators.
+
+    ``quote`` leaves alphanumerics and ``_.-~`` alone, so ``track.label`` passes
+    through untouched while ``min(...)`` becomes ``min%28...%29`` and an operator
+    suffix like ``userRating>>`` becomes ``userRating%3E%3E``.
+    """
+    key, sep, value = segment.partition('=')
+    if not sep:
+        return quote(unquote(key), safe='')
+    return quote(unquote(key), safe='') + '=' + quote(unquote(value), safe='')
+
+
 # Query keys that affect presentation rather than what the item matches.
 # group and having are NOT here: they change the result set.
 PRESENTATION_KEYS = {'sort', 'limit', 'type', 'includeGuids'}
@@ -221,11 +243,11 @@ def _criteria_segments(raw):
     """The query segments that decide what an item matches, sort/limit/type aside.
 
     Compared before and after a write to prove an edit didn't quietly widen the
-    filter. Kept as raw segments so the comparison needs no parser and no
-    understanding of the grammar.
+    filter. Fully decoded first, so two spellings of the same criterion compare
+    equal - the comparison is about meaning, not encoding.
     """
     query = urlsplit(_with_literal_query(raw)).query
-    return sorted(seg for seg in (query or '').split('&')
+    return sorted(unquote(seg) for seg in (query or '').split('&')
                   if seg and seg.split('=', 1)[0] not in PRESENTATION_KEYS)
 
 
@@ -278,13 +300,33 @@ def _replace_query_params(raw, updates):
                 out.append(f'{key}={quote(str(updates[key]), safe="")}')
                 replaced.add(key)
             continue  # drop any later duplicate of a key we replaced
-        out.append(segment)
+        # Finding the query may have unescaped the values; normalizing every
+        # segment puts exactly one level of encoding back, whatever arrived.
+        out.append(_canonical_segment(segment))
 
     for key, value in updates.items():
         if key not in replaced:
             out.append(f'{key}={quote(str(value), safe="")}')
 
     return urlunsplit(scheme_split._replace(query='&'.join(out)))
+
+
+def _item_count(obj):
+    """How many items the item currently holds, or None if the server won't say.
+
+    A playlist reports leafCount, a collection childCount. This is the only
+    invariant that survives an encoding bug: a filter can be spelled two ways
+    that compare equal as text while Plex accepts one and silently discards the
+    other, and the count is what tells them apart.
+    """
+    for attr in ('leafCount', 'childCount'):
+        value = getattr(obj, attr, None)
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+    return None
 
 
 def _stored_content(obj):
@@ -296,7 +338,7 @@ def _stored_content(obj):
     return getattr(obj, 'content', None)
 
 
-def _confirm_write(obj, original_raw, expected_criteria):
+def _confirm_write(obj, original_raw, expected_criteria, expected_count=None):
     """Check what Plex actually stored, and undo the write if the criteria changed.
 
     Reporting the filter we *intended* to save proves nothing - a wipe reports a
@@ -314,21 +356,32 @@ def _confirm_write(obj, original_raw, expected_criteria):
         )
 
     actual = _criteria_segments(stored)
-    if actual == expected_criteria:
+    actual_count = _item_count(obj)
+    count_changed = (expected_count is not None and actual_count is not None
+                     and actual_count != expected_count)
+
+    if actual == expected_criteria and not count_changed:
         return stored, None
+
+    if count_changed:
+        reason = (f"it now holds {actual_count} items instead of {expected_count}. The filter "
+                  f"reads the same, so Plex rejected how it was written rather than what it says")
+    else:
+        reason = (f"{len(expected_criteria)} filter criteria before, {len(actual)} after")
 
     # The write changed what the item matches. Put the original back.
     restored = False
     try:
         key = f"{obj.key}/items{utils.joinArgs({'uri': original_raw})}"
         obj._server.query(key, method=obj._server._session.put)
-        restored = _criteria_segments(_stored_content(obj) or '') == expected_criteria
+        restored_raw = _stored_content(obj) or ''
+        restored = (_criteria_segments(restored_raw) == expected_criteria
+                    and (expected_count is None or _item_count(obj) in (None, expected_count)))
     except Exception:
         restored = False
 
     return stored, (
-        f"The edit changed what this item matches, which was not intended: "
-        f"{len(expected_criteria)} filter criteria before, {len(actual)} after. "
+        f"The edit changed what this item matches, which was not intended: {reason}. "
         + ("The previous filter has been restored." if restored else
            "RESTORING THE PREVIOUS FILTER FAILED - the item is left with the wrong filter. "
            f"Its previous definition was: {unquote(original_raw)}")
@@ -396,6 +449,7 @@ def update_smart_filter(obj, filters=None, sort=None, limit=None, libtype=None,
 
         # This path must not change what the item matches. Prove it before writing.
         criteria = _criteria_segments(raw)
+        count_before = _item_count(obj)
         if _criteria_segments(new_uri) != criteria:
             return before, None, (
                 "Refusing to save: rebuilding the filter to change the sort would have altered "
@@ -408,8 +462,9 @@ def update_smart_filter(obj, filters=None, sort=None, limit=None, libtype=None,
         except Exception as e:
             return before, None, f"Could not save the filter: {type(e).__name__}: {e}"
 
-        # And prove it again against what the server actually stored.
-        stored, error = _confirm_write(obj, raw, criteria)
+        # And prove it again against what the server actually stored - including
+        # the item count, which is what catches a filter Plex silently discarded.
+        stored, error = _confirm_write(obj, raw, criteria, expected_count=count_before)
         if error:
             return before, None, error
 

@@ -22,7 +22,7 @@ something else went unnoticed.
 
 import sys
 from pathlib import Path
-from urllib.parse import parse_qsl, quote, unquote, urlsplit
+from urllib.parse import parse_qsl, quote, unquote, unquote_plus, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -35,20 +35,27 @@ from modules.smart_filter import (  # noqa: E402
 )
 
 ROOT = 'server://abc/com.plexapp.plugins.library'
+CURATED = 102
+FULL_LIBRARY = 317338
 PATH = ROOT + '/library/sections/3/all'
 
 # Shaped like a real curated playlist: a label criterion, grouped, with a having
 # clause - the combination that broke most often.
 QUERY = ('type=10&track.label=709338&group=grandparentTitle'
-         '&having=track.userRating%3E%3E=8&sort=titleSort&limit=102')
+         '&having=min%28album.originallyAvailableAt%29&sort=titleSort&limit=102')
 
 
 def encodings_of(query):
-    """Every form Plex has been observed to return `content` in."""
+    """Every form Plex has been observed to return `content` in.
+
+    The last one is the dangerous one: encoded uniformly, so decoding far enough
+    to find the query also unescapes the values.
+    """
     return {
         'literal ?': PATH + '?' + query,
         'encoded ? (%3F)': PATH + quote('?' + query, safe=''),
         'literal ?, encoded body': PATH + '?' + quote(query, safe=''),
+        'encoded uniformly': PATH + quote('?' + unquote(query), safe=''),
     }
 
 
@@ -103,8 +110,18 @@ class FakeServer:
     def query(self, key, method=None):
         self.puts.append(key)
         uri = dict(parse_qsl(urlsplit(key).query)).get('uri')
-        if uri:
-            self.owner.content = uri
+        if uri is None:
+            return
+        self.owner.content = uri
+        # Plex cannot parse a having clause with unescaped parentheses. Rather
+        # than erroring it drops the whole filter and matches everything - the
+        # failure that made three separate fixes look correct in the response.
+        body = uri.partition('?')[2]
+        if '(' in unquote_plus(body.replace('%25', '%')) and '%28' not in body:
+            self.owner.content = PATH + '?type=10'
+            self.owner.leafCount = FULL_LIBRARY
+        else:
+            self.owner.leafCount = CURATED
 
 
 class FakeSmartPlaylist(SmartFilterMixin):
@@ -112,6 +129,7 @@ class FakeSmartPlaylist(SmartFilterMixin):
     title = 'Starred: Top'
     ratingKey = 7
     key = '/playlists/7'
+    leafCount = CURATED
 
     def __init__(self, content, server_factory=FakeServer):
         self.content = content
@@ -136,6 +154,23 @@ class WipingServer(FakeServer):
             uri = dict(parse_qsl(urlsplit(key).query)).get('uri')
             if uri:
                 self.owner.content = uri
+
+
+class SilentlyIgnoringServer(FakeServer):
+    """Stores exactly what it was sent, but matches everything anyway.
+
+    Models the failure that defeated three fixes: the saved filter reads
+    correctly, so any text comparison of the criteria passes, while Plex has in
+    fact discarded it. Only the item count tells them apart.
+    """
+
+    def query(self, key, method=None):
+        self.puts.append(key)
+        uri = dict(parse_qsl(urlsplit(key).query)).get('uri')
+        if uri is None:
+            return
+        self.owner.content = uri
+        self.owner.leafCount = CURATED if len(self.puts) > 1 else FULL_LIBRARY
 
 
 # --------------------------------------------------------------------------- #
@@ -164,8 +199,13 @@ def test_sort_only_preserves_criteria():
               f'{before}\n      -> {_criteria_segments(playlist.content)}')
 
         stored = unquote(playlist.content)
+        check(f'[{name}] parentheses stay escaped on the wire',
+              'min%28' in playlist.content or 'min%2528' in playlist.content, playlist.content)
         for fragment in ('track.label=709338', 'group=grandparentTitle', 'having=', 'type=10'):
             check(f'[{name}] {fragment} survived', fragment in stored, stored)
+        check(f'[{name}] the item count is unchanged',
+              playlist.leafCount == CURATED,
+              f'{CURATED} -> {playlist.leafCount}')
         check(f'[{name}] the sort actually changed', 'sort=track.random' in stored, stored)
         check(f'[{name}] exactly one sort=', stored.count('sort=') == 1, stored)
         check(f'[{name}] filter_after reports storage, not intent',
@@ -248,6 +288,26 @@ def test_a_bad_rebuild_is_refused_before_writing():
     check('  and reported as an error', after is None, str(after))
 
 
+def test_a_filter_plex_ignores_is_caught_by_the_count():
+    """The criteria can read correctly while Plex has thrown them away.
+
+    A having clause written with unescaped parentheses is stored verbatim and
+    then ignored, so before and after compare equal as text. The item count is
+    the only thing that changes, which is why it is checked.
+    """
+    playlist = FakeSmartPlaylist(PATH + '?' + QUERY, server_factory=SilentlyIgnoringServer)
+    before_criteria = _criteria_segments(playlist.content)
+
+    _, after, error = update_smart_filter(playlist, sort='track.random')
+
+    check('a silently ignored filter is detected', bool(error) and 'items instead of' in error, str(error))
+    check('  the criteria alone would NOT have caught it',
+          _criteria_segments(playlist.content) == before_criteria,
+          'the fixture no longer models the bug: the criteria changed too')
+    check('  reported as an error, not success', after is None, str(after))
+    check('  the item count is back', playlist.leafCount == CURATED, str(playlist.leafCount))
+
+
 def test_empty_groups_are_not_reported_as_criteria():
     playlist = FakeSmartPlaylist(PATH + '?type=10&push=1&and=1&pop=1&genre=Rock')
     described = describe_smart_filter(playlist)
@@ -267,6 +327,7 @@ def main():
         test_replacing_filters_keeps_the_other_parameters,
         test_unreadable_filters_are_still_editable,
         test_a_bad_rebuild_is_refused_before_writing,
+        test_a_filter_plex_ignores_is_caught_by_the_count,
         test_empty_groups_are_not_reported_as_criteria,
     ):
         print(f'\n--- {test.__name__}')
