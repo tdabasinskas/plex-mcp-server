@@ -174,20 +174,6 @@ def current_definition(obj, raw_content=None):
     return definition, None
 
 
-def filter_clause_count(raw):
-    """How many filter clauses a saved URI carries, without parsing its structure.
-
-    Counts query segments that aren't reserved keys or group punctuation. Works on
-    the encoded string, so it needs nothing from the parser.
-    """
-    query = urlsplit(raw).query
-    if not query:
-        return 0
-    structural = RESERVED_KEYS | {'push', 'pop', 'and', 'or', 'includeGuids'}
-    return sum(1 for seg in query.split('&')
-               if seg and seg.split('=', 1)[0] not in structural)
-
-
 def _replace_query_params(raw, updates):
     """Return ``raw`` with the named query params replaced, every other segment byte-identical.
 
@@ -248,12 +234,11 @@ def update_smart_filter(obj, filters=None, sort=None, limit=None, libtype=None,
         before = {"unparsed": True, "raw": unquote(raw), "reason": parse_error}
 
     if filters is None:
-        # Preserve the saved filter clauses verbatim; change only what was asked for.
-        if not filter_clause_count(raw) and not allow_empty_filter:
-            return before, None, (
-                "Refusing to edit: the saved filter has no criteria, so it already matches the "
-                "entire library. Pass the filters you want, or set allow_empty_filter=true."
-            )
+        # Preserve the saved filter clauses verbatim; change only what was asked
+        # for. No emptiness check here: the criteria aren't being touched, so this
+        # path cannot make an item match more than it already does. Checking
+        # anyway only ever produces false refusals - a grouped filter keeps its
+        # condition in `having=`, which no clause count can recognise.
         updates = {}
         if sort is not None:
             updates['sort'] = ','.join(sort) if isinstance(sort, list) else sort
