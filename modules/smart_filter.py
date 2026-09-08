@@ -215,23 +215,31 @@ def _with_literal_query(raw):
     return raw
 
 
+# Characters that stay literal inside a filter value. A comparison clause keeps
+# its own '=' - encoding that to %3D rewrites a criterion we promised to leave
+# alone - while parentheses, angle brackets, spaces and '&' must be escaped or
+# Plex fails to parse the clause and silently discards the whole filter. This set
+# reproduces the spellings Plex itself stores.
+VALUE_SAFE = "=,:;"
+
+
 def _canonical_segment(segment):
-    """Normalize one ``key=value`` pair to exactly one level of encoding.
+    """Normalize one ``key=value`` pair to the encoding Plex stores.
 
-    Decode fully, then encode once. Applied to every segment whatever shape the
-    saved URI arrived in, so the result is the same string either way - which is
-    what the explicit-filters path produces through urlencode, and what Plex
-    accepts. Splitting has already happened, so decoding a value here cannot
-    disturb the separators.
+    Decode fully, then re-escape only what has to be escaped. Applied to every
+    segment whatever shape the saved URI arrived in, so the result is the same
+    string either way, and identical to what the explicit-filters path produces:
 
-    ``quote`` leaves alphanumerics and ``_.-~`` alone, so ``track.label`` passes
-    through untouched while ``min(...)`` becomes ``min%28...%29`` and an operator
-    suffix like ``userRating>>`` becomes ``userRating%3E%3E``.
+        min(album.originallyAvailableAt)  ->  min%28album.originallyAvailableAt%29
+        track.userRating>>=8              ->  track.userRating%3E%3E=8
+
+    Splitting has already happened, so decoding a value here cannot disturb the
+    separators.
     """
     key, sep, value = segment.partition('=')
     if not sep:
         return quote(unquote(key), safe='')
-    return quote(unquote(key), safe='') + '=' + quote(unquote(value), safe='')
+    return quote(unquote(key), safe='') + '=' + quote(unquote(value), safe=VALUE_SAFE)
 
 
 # Query keys that affect presentation rather than what the item matches.
