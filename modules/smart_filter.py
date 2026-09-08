@@ -41,36 +41,29 @@ def describe_smart_filter(obj, raw_content=None):
 
     result = {"smartFilterRaw": unquote(raw)}
 
-    # _parseFilters takes the content explicitly, so it works off the URI we
-    # captured rather than whatever state the object is in now.
+    # Parse with our own reader rather than plexapi's. It agrees with plexapi on
+    # everything plexapi can read, survives the groups plexapi dies on, and drops
+    # the empty-group artefacts plexapi leaves behind ({"and": []}) - so the
+    # parsed structure matches what the raw string actually means.
     try:
-        result["smartFilter"] = obj._parseFilters(raw)
-        return result
-    except Exception as e:
-        first_error = f"{type(e).__name__}: {e}"
-
-    # plexapi's parser dies with "IndexError: pop from empty list" on any filter
-    # group that ends up holding nothing. Retry with a parser that tolerates it
-    # rather than lose the whole filter.
-    try:
-        result["smartFilter"] = _parse_tolerantly(obj, raw)
-        result["smartFilterNote"] = (
-            "The saved filter contained a group holding no criteria, which plexapi's parser "
-            "cannot represent. It was read with a tolerant parser and the empty group ignored - "
-            "an empty group constrains nothing, so the filter's meaning is unchanged. "
-            "smartFilterRaw is exactly as Plex stored it."
-        )
+        parsed, pruned = _parse_tolerantly(raw)
+        result["smartFilter"] = parsed
+        if pruned:
+            result["smartFilterNote"] = (
+                "The saved filter contained a group holding no criteria. An empty group "
+                "constrains nothing, so it was left out of smartFilter and the filter's meaning "
+                "is unchanged. smartFilterRaw is exactly as Plex stored it."
+            )
     except Exception as e:
         result["smartFilter"] = {
-            "error": f"Could not parse the saved filter: {first_error}",
-            "retry_error": f"{type(e).__name__}: {e}",
+            "error": f"Could not parse the saved filter: {type(e).__name__}: {e}",
         }
 
     return result
 
 
-def _parse_tolerantly(obj, raw):
-    """Parse a filter URI with a parser that survives an empty filter group.
+def _parse_tolerantly(raw):
+    """Parse a filter URI, returning ``(parsed, pruned_an_empty_group)``.
 
     plexapi's ``_parseFilterGroups`` ends with ``currentFiltersStack.pop()``, which
     raises IndexError whenever a group finishes having collected nothing. Two
@@ -89,7 +82,9 @@ def _parse_tolerantly(obj, raw):
         if value.startswith("="):
             key, value = f"{key}=", value[1:]
         feed.append((key, value))
-    return _parse_feed(feed)
+
+    pruned = []
+    return _parse_feed(feed, pruned), bool(pruned)
 
 
 # The query keys plexapi handles itself rather than treating as filter clauses.
@@ -99,7 +94,7 @@ AS_IS_KEYS = {'group', 'having'}
 RESERVED_KEYS = SPECIAL_KEYS | INTEGER_KEYS | AS_IS_KEYS
 
 
-def _parse_feed(feed):
+def _parse_feed(feed, pruned=None):
     """Mirror of plexapi's ``_parseQueryFeed`` over an already-built feed."""
     from plexapi import utils as plexapi_utils
 
@@ -116,7 +111,9 @@ def _parse_feed(feed):
             parsed['sort'] = value.split(',')
         else:
             feed.appendleft((key, value))
-            group = _parse_groups(feed, set(RESERVED_KEYS) | {'pop'})
+            group = _parse_groups(feed, set(RESERVED_KEYS) | {'pop'}, pruned)
+            if not group:
+                continue  # nothing in it; don't fold an empty dict into the result
             if 'filters' in parsed:
                 parsed['filters'] = {'and': [parsed['filters'], group]}
             else:
@@ -124,7 +121,7 @@ def _parse_feed(feed):
     return parsed
 
 
-def _parse_groups(feed, return_on):
+def _parse_groups(feed, return_on, pruned=None):
     """Mirror of plexapi's ``_parseFilterGroups``, but empty groups yield {} not IndexError."""
     stack = []
     operator = None
@@ -132,11 +129,13 @@ def _parse_groups(feed, return_on):
     while feed:
         key, value = feed.popleft()
         if key == 'push':
-            nested = _parse_groups(feed, return_on)
+            nested = _parse_groups(feed, return_on, pruned)
             if nested:
+                stack.append(nested)
+            elif pruned is not None:
                 # A group that held nothing adds nothing; dropping it keeps the
                 # filter's meaning and keeps {} out of the parent's clause list.
-                stack.append(nested)
+                pruned.append(True)
         elif key in return_on:
             if key != 'pop':
                 feed.appendleft((key, value))
@@ -149,11 +148,16 @@ def _parse_groups(feed, return_on):
         else:
             stack.append({key: value})
 
+    # A group holding nothing is reported as nothing, whether or not it carried an
+    # operator. Returning {'and': []} would be truthy and survive the parent's
+    # skip, leaving artefacts like {"and": [{}, {"and": []}]} in the output.
+    if not stack:
+        return {}
     if not operator and len(stack) > 1:
         operator = 'and'
     if operator:
         return {operator: stack}
-    return stack.pop() if stack else {}
+    return stack.pop()
 
 
 def current_definition(obj, raw_content=None):
@@ -174,6 +178,56 @@ def current_definition(obj, raw_content=None):
     return definition, None
 
 
+def _with_literal_query(raw):
+    """Return the URI with a literal '?' separating its query.
+
+    Plex can hand back ``content`` percent-encoded, and ``urlsplit`` then finds no
+    query at all - so a replacement loop has nothing to iterate, silently appends
+    instead, and the caller is told the edit succeeded. Unquoting restores the
+    literal separators while leaving value-level encoding alone: a '&' inside a
+    title was doubly encoded on the way in, so one unquote leaves it as %26.
+    """
+    for _ in range(3):
+        if '?' in raw:
+            return raw
+        unquoted = unquote(raw)
+        if unquoted == raw:
+            break
+        raw = unquoted
+    return raw
+
+
+def _saved_params(raw, wanted):
+    """Read named top-level query params straight out of the saved URI."""
+    query = urlsplit(_with_literal_query(raw)).query
+    found = {}
+    for segment in (query or '').split('&'):
+        if '=' not in segment:
+            continue
+        key, value = segment.split('=', 1)
+        if key in wanted and key not in found:
+            found[key] = value
+    return found
+
+
+def _verify_updates(uri, updates):
+    """Confirm each requested parameter landed exactly once with its new value.
+
+    Cheap insurance against the failure this replaced: an edit that reports
+    success while changing nothing. Checked on the URI we built, so it costs no
+    extra request.
+    """
+    query = urlsplit(uri).query
+    segments = [seg for seg in (query or '').split('&') if '=' in seg]
+    for key, value in updates.items():
+        matches = [seg.split('=', 1)[1] for seg in segments if seg.split('=', 1)[0] == key]
+        if len(matches) != 1:
+            return f"'{key}' appears {len(matches)} times in the rebuilt filter, expected exactly once"
+        if unquote(matches[0]) != str(value):
+            return f"'{key}' is {unquote(matches[0])!r} in the rebuilt filter, expected {str(value)!r}"
+    return None
+
+
 def _replace_query_params(raw, updates):
     """Return ``raw`` with the named query params replaced, every other segment byte-identical.
 
@@ -181,7 +235,7 @@ def _replace_query_params(raw, updates):
     sort-only edit preserve filter clauses exactly - including ones no parser can
     read. Only keys present in ``updates`` are touched.
     """
-    scheme_split = urlsplit(raw)
+    scheme_split = urlsplit(_with_literal_query(raw))
     segments = scheme_split.query.split('&') if scheme_split.query else []
 
     out, replaced = [], set()
@@ -249,8 +303,19 @@ def update_smart_filter(obj, filters=None, sort=None, limit=None, libtype=None,
         if not updates:
             return before, before, None  # nothing asked for; don't write
 
+        new_uri = _replace_query_params(raw, updates)
+
+        # Never report success for an edit that didn't take. This exact failure -
+        # appending instead of replacing, then claiming it worked - is what the
+        # normalization above fixes; the check makes a recurrence loud.
+        mismatch = _verify_updates(new_uri, updates)
+        if mismatch:
+            return before, None, (
+                f"Refusing to save: the rebuilt filter doesn't match what was asked for - "
+                f"{mismatch}. Nothing was written."
+            )
+
         try:
-            new_uri = _replace_query_params(raw, updates)
             key = f"{obj.key}/items{utils.joinArgs({'uri': new_uri})}"
             obj._server.query(key, method=obj._server._session.put)
         except Exception as e:
@@ -268,9 +333,7 @@ def update_smart_filter(obj, filters=None, sort=None, limit=None, libtype=None,
     # Filters are being replaced, so the saved clauses are going anyway. Take the
     # parameters not being changed from the raw query rather than the parse, so
     # this path doesn't depend on the parser either.
-    saved = dict(pair for pair in
-                 (seg.split('=', 1) for seg in (urlsplit(raw).query or '').split('&') if '=' in seg)
-                 if pair[0] in ('sort', 'limit', 'type'))
+    saved = _saved_params(raw, ('sort', 'limit', 'type'))
 
     after = {
         "filters": filters,
