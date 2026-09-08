@@ -55,6 +55,7 @@ def _serialize_candidate(result):
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def media_get_match(media_title: str = None, media_id: int = None, library_name: str = None,
+                          libtype: str = None,
                           search_title: str = None, search_year: int = None,
                           search_agent: str = None) -> str:
     """Show what a media item is currently matched to, plus candidate matches it could be (re)matched to.
@@ -68,6 +69,8 @@ async def media_get_match(media_title: str = None, media_id: int = None, library
         media_title: Title of the media (optional if media_id is provided)
         media_id: Plex rating key to directly fetch the item (optional if media_title is provided)
         library_name: Optional library name to limit search to when using media_title
+        libtype: Optional content type to limit search to (movie, show, season, episode,
+            artist, album, track)
         search_title: Optional title to search candidates for, instead of the item's own title
         search_year: Optional year to refine the candidate search
         search_agent: Optional metadata agent identifier to search with (defaults to the library's agent)
@@ -75,7 +78,7 @@ async def media_get_match(media_title: str = None, media_id: int = None, library
     try:
         plex = connect_to_plex()
 
-        item, error = _resolve_media(plex, media_title, media_id, library_name)
+        item, error = _resolve_media(plex, media_title, media_id, library_name, libtype)
         if error is not None:
             return error
 
@@ -121,6 +124,7 @@ async def media_get_match(media_title: str = None, media_id: int = None, library
 
 @mcp.tool()
 async def media_fix_match(media_title: str = None, media_id: int = None, library_name: str = None,
+                          libtype: str = None,
                           guid: str = None, auto: bool = False,
                           search_agent: str = None) -> str:
     """(Re)match a media item to a specific candidate, or auto-match to Plex's top pick.
@@ -134,6 +138,8 @@ async def media_fix_match(media_title: str = None, media_id: int = None, library
         media_title: Title of the media (optional if media_id is provided)
         media_id: Plex rating key to directly fetch the item (optional if media_title is provided)
         library_name: Optional library name to limit search to when using media_title
+        libtype: Optional content type to limit search to (movie, show, season, episode,
+            artist, album, track)
         guid: The guid of the candidate match to apply (from media_get_match candidates)
         auto: If True, auto-match to the agent's top candidate instead of a specific guid
         search_agent: Optional metadata agent identifier to match with (defaults to the library's agent)
@@ -146,7 +152,7 @@ async def media_fix_match(media_title: str = None, media_id: int = None, library
                 "error": "Provide 'guid' (from media_get_match candidates) or set auto=True."
             }, indent=4)
 
-        item, error = _resolve_media(plex, media_title, media_id, library_name)
+        item, error = _resolve_media(plex, media_title, media_id, library_name, libtype)
         if error is not None:
             return error
 
@@ -205,18 +211,21 @@ async def media_fix_match(media_title: str = None, media_id: int = None, library
 
 
 @mcp.tool()
-async def media_unmatch(media_title: str = None, media_id: int = None, library_name: str = None) -> str:
+async def media_unmatch(media_title: str = None, media_id: int = None, library_name: str = None,
+                        libtype: str = None) -> str:
     """Remove the current metadata match from a media item, leaving it unmatched.
 
     Args:
         media_title: Title of the media (optional if media_id is provided)
         media_id: Plex rating key to directly fetch the item (optional if media_title is provided)
         library_name: Optional library name to limit search to when using media_title
+        libtype: Optional content type to limit search to (movie, show, season, episode,
+            artist, album, track)
     """
     try:
         plex = connect_to_plex()
 
-        item, error = _resolve_media(plex, media_title, media_id, library_name)
+        item, error = _resolve_media(plex, media_title, media_id, library_name, libtype)
         if error is not None:
             return error
 

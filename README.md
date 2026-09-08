@@ -134,9 +134,9 @@ Every tool below identifies its target the same way: by `media_id` (a Plex ratin
 | `media_get_artwork` | Retrieve posters or background artwork. | `media_title`, `media_id`, `library_name`, `libtype`, `image_types`, `output_format`, `output_dir` |
 | `media_set_artwork` | Set artwork from a local path or URL. | `media_title`, `media_id`, `library_name`, `libtype`, `art_type`, `filepath`, `url`, `lock` |
 | `media_list_available_artwork` | List alternative artwork available for selection. | `media_title`, `media_id`, `library_name`, `libtype`, `art_type` |
-| `media_get_match` | Show an item's current match (guid, agent, external IDs) and candidate matches to (re)match to. | `media_title`, `library_name`, `media_id`, `search_title`, `search_year`, `search_agent` |
-| `media_fix_match` | (Re)match an item to a candidate `guid`, or `auto`-match to the agent's top pick. | `media_title`, `library_name`, `media_id`, `guid`, `auto`, `search_agent` |
-| `media_unmatch` | Remove the current metadata match, leaving the item unmatched. | `media_title`, `library_name`, `media_id` |
+| `media_get_match` | Show an item's current match (guid, agent, external IDs) and candidate matches to (re)match to. | `media_title`, `media_id`, `library_name`, `libtype`, `search_title`, `search_year`, `search_agent` |
+| `media_fix_match` | (Re)match an item to a candidate `guid`, or `auto`-match to the agent's top pick. | `media_title`, `media_id`, `library_name`, `libtype`, `guid`, `auto`, `search_agent` |
+| `media_unmatch` | Remove the current metadata match, leaving the item unmatched. | `media_title`, `media_id`, `library_name`, `libtype` |
 
 > **Identifying an item.** When a title matches more than one item, these tools change nothing and return the list of candidates instead, each with the `id` to call back with. Music is where this bites: an artist, an album and a track can all share one title, so candidate entries carry `artist`, `album` and track `index` to tell them apart. Two ways to skip the round trip - pass `libtype` (`{"media_title": "Intro", "libtype": "track"}`) to search one content type, or pass a `media_id` you already have.
 
