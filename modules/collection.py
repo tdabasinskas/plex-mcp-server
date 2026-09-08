@@ -1,7 +1,7 @@
 from plexapi.collection import Collection # type: ignore
 from typing import List, Dict, Any
 from modules import mcp, connect_to_plex
-from modules.smart_filter import describe_smart_filter
+from modules.smart_filter import describe_smart_filter, update_smart_filter
 import os
 from plexapi.exceptions import NotFound, BadRequest  # type: ignore
 from mcp.types import ToolAnnotations  # type: ignore
@@ -957,11 +957,18 @@ async def collection_create_smart(collection_title: str, library_name: str, filt
 @mcp.tool()
 async def collection_edit_smart_filters(collection_title: str = None, collection_id: int = None,
                                         library_name: str = None, filters: dict = None,
-                                        sort: str = None, limit: int = None, libtype: str = None) -> str:
+                                        sort: str = None, limit: int = None, libtype: str = None,
+                                        allow_empty_filter: bool = False) -> str:
     """Update the filter definition of an existing smart collection.
 
-    This replaces the smart collection's search criteria; Plex re-evaluates it immediately.
-    Only works on smart collections - use collection_edit for a regular collection's attributes.
+    Anything you don't pass is left as it is, so a sort-only edit keeps the existing
+    criteria. Plex re-evaluates the collection immediately. Only works on smart
+    collections - use collection_edit for a regular collection's attributes.
+
+    Passing `filters` replaces the whole filter set rather than merging clause by
+    clause, so read the current one first (collection_get_contents with
+    include_items=false) if you mean to add to it. The response reports the
+    definition before and after the edit.
 
     Args:
         collection_title: Title of the smart collection to edit (optional if collection_id is provided)
@@ -970,9 +977,14 @@ async def collection_edit_smart_filters(collection_title: str = None, collection
         filters: New advanced filters as a dict, e.g. {"genre": "Drama", "year>>": 2010}.
             See library_get_smart_filter_options for available fields, operators, and values.
             No suffix on a string field means 'contains': "title=" is the exact match.
-        sort: New sort field(s), e.g. "addedAt:desc"
-        limit: New maximum number of items in the collection
-        libtype: Content type to filter (movie, show, season, episode, artist, album, track, photo)
+            Omit to keep the current filters.
+        sort: New sort field(s), e.g. "addedAt:desc". Omit to keep the current sort.
+        limit: New maximum number of items. Omit to keep the current limit.
+        libtype: Content type to filter (movie, show, season, episode, artist, album, track, photo).
+            Omit to keep the current one.
+        allow_empty_filter: Permit saving a filter with no criteria, which matches the
+            entire library. Refused by default, since it destroys the existing
+            definition and is rarely intended.
     """
     try:
         plex = connect_to_plex()
@@ -988,9 +1000,14 @@ async def collection_edit_smart_filters(collection_title: str = None, collection
             }, indent=4)
 
         try:
-            collection.updateFilters(libtype=libtype, limit=limit, sort=sort, filters=filters)
+            before, after, error = update_smart_filter(
+                collection, filters=filters, sort=sort, limit=limit, libtype=libtype,
+                allow_empty_filter=allow_empty_filter)
         except BadRequest as e:
             return json.dumps({"status": "error", "message": f"Invalid smart collection filters: {str(e)}"}, indent=4)
+
+        if error:
+            return json.dumps({"status": "error", "message": error, "current_filter": before}, indent=4)
 
         collection.reload()
         return json.dumps({
@@ -999,7 +1016,9 @@ async def collection_edit_smart_filters(collection_title: str = None, collection
             "data": {
                 "title": collection.title,
                 "id": collection.ratingKey,
-                "item_count": collection.childCount if hasattr(collection, 'childCount') else None
+                "item_count": collection.childCount if hasattr(collection, 'childCount') else None,
+                "filter_before": before,
+                "filter_after": after
             }
         }, indent=4)
     except Exception as e:
