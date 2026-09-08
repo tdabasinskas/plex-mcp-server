@@ -1,4 +1,5 @@
 from modules import mcp, connect_to_plex
+from modules.smart_filter import describe_smart_filter
 from typing import List
 from plexapi.playlist import Playlist # type: ignore
 from plexapi.exceptions import NotFound, BadRequest  # type: ignore
@@ -731,8 +732,12 @@ async def playlist_get_contents(playlist_title: str = None, playlist_id: int = N
 
     Results are paginated so large playlists don't overflow the response. The response includes
     `totalItems`, `offset`, `limit`, `returnedCount`, and `hasMore`; page through by increasing
-    `offset`. For a smart playlist the response also includes a `smartFilter` object (the saved
-    search that populates it).
+    `offset`. For a smart playlist the response also includes `smartFilter` (the saved search that
+    populates it, in the form the create/edit tools accept) and `smartFilterRaw` (the same filter
+    as Plex stores it on the wire). Compare the two when verifying what a write actually saved:
+    the wire form spells operators differently, so `title=` in `smartFilter` is `title==` in
+    `smartFilterRaw` and both mean an exact match. If the filter can't be read, `smartFilter`
+    carries an `error` explaining why rather than going missing.
 
     Args:
         playlist_title: Title of the playlist to get contents of (optional if playlist_id is provided)
@@ -810,6 +815,10 @@ def get_playlist_contents(playlist, offset=0, limit=None, include_items=True):
     When include_items is False, no items are fetched at all - only metadata and the smart filter.
     """
     try:
+        # Capture the filter URI before reloading: a playlist's key addresses its
+        # /items representation, which need not carry 'content'.
+        raw_content = getattr(playlist, 'content', None)
+
         # Refresh so totalItems (leafCount) is current
         try:
             playlist.reload()
@@ -817,15 +826,7 @@ def get_playlist_contents(playlist, offset=0, limit=None, include_items=True):
             pass
         total = getattr(playlist, 'leafCount', None)
 
-        # Whether this is a smart playlist, and its filter definition if so
         is_smart = bool(getattr(playlist, 'smart', False))
-        smart_filter = None
-        if is_smart:
-            try:
-                smart_filter = playlist.filters()
-            except Exception:
-                # A smart playlist whose filter can't be parsed still returns contents
-                smart_filter = None
 
         playlist_info = {
             "title": playlist.title,
@@ -838,8 +839,8 @@ def get_playlist_contents(playlist, offset=0, limit=None, include_items=True):
             "totalItems": total
         }
         # Include the smart filter definition so it can be read back before editing
-        if smart_filter is not None:
-            playlist_info["smartFilter"] = smart_filter
+        if is_smart:
+            playlist_info.update(describe_smart_filter(playlist, raw_content))
 
         # Filter-only mode: skip fetching items entirely
         if not include_items:

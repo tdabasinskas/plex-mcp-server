@@ -1,6 +1,7 @@
 from plexapi.collection import Collection # type: ignore
 from typing import List, Dict, Any
 from modules import mcp, connect_to_plex
+from modules.smart_filter import describe_smart_filter
 import os
 from plexapi.exceptions import NotFound, BadRequest  # type: ignore
 from mcp.types import ToolAnnotations  # type: ignore
@@ -1013,6 +1014,10 @@ def get_collection_contents(collection, offset=0, limit=None, include_items=True
     Mirrors get_playlist_contents so the two readbacks stay consistent.
     """
     try:
+        # Capture the filter URI before reloading: a collection's key addresses
+        # its /children representation, which need not carry 'content'.
+        raw_content = getattr(collection, 'content', None)
+
         # Refresh so totalItems (childCount) is current
         try:
             collection.reload()
@@ -1020,15 +1025,7 @@ def get_collection_contents(collection, offset=0, limit=None, include_items=True
             pass
         total = getattr(collection, 'childCount', None)
 
-        # For smart collections, include the current filter definition
         is_smart = bool(getattr(collection, 'smart', False))
-        smart_filter = None
-        if is_smart:
-            try:
-                smart_filter = collection.filters()
-            except Exception:
-                # A smart collection whose filter can't be parsed still returns contents
-                smart_filter = None
 
         collection_info = {
             "title": collection.title,
@@ -1040,8 +1037,8 @@ def get_collection_contents(collection, offset=0, limit=None, include_items=True
             "totalItems": total
         }
         # Include the smart filter definition so it can be read back before editing
-        if smart_filter is not None:
-            collection_info["smartFilter"] = smart_filter
+        if is_smart:
+            collection_info.update(describe_smart_filter(collection, raw_content))
 
         # Filter-only mode: skip fetching items entirely
         if not include_items:
@@ -1113,9 +1110,13 @@ async def collection_get_contents(collection_title: str = None, collection_id: i
     """Get the contents of a collection, with pagination, including the filter for a smart collection.
 
     This is the collection analog of playlist_get_contents: it returns one page of the collection's
-    items and, when the collection is smart, a smartFilter object (libtype, sort, limit, filters)
-    describing the saved search that populates it. The response includes `totalItems`, `offset`,
-    `limit`, `returnedCount`, and `hasMore`; page through by increasing `offset`.
+    items and, when the collection is smart, `smartFilter` (the saved search that populates it, in
+    the form the create/edit tools accept) plus `smartFilterRaw` (the same filter as Plex stores it
+    on the wire). Compare the two when verifying what a write actually saved: the wire form spells
+    operators differently, so `title=` in `smartFilter` is `title==` in `smartFilterRaw` and both
+    mean an exact match. If the filter can't be read, `smartFilter` carries an `error` explaining
+    why rather than going missing. The response includes `totalItems`, `offset`, `limit`,
+    `returnedCount`, and `hasMore`; page through by increasing `offset`.
 
     Args:
         collection_title: Title of the collection (optional if collection_id is provided)
