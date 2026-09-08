@@ -308,6 +308,32 @@ def test_a_filter_plex_ignores_is_caught_by_the_count():
     check('  the item count is back', playlist.leafCount == CURATED, str(playlist.leafCount))
 
 
+def test_a_sort_only_edit_rewrites_nothing_but_the_sort():
+    """The strongest form of "preserve": byte-identical except the sort.
+
+    Checking that criteria survive is not enough - they can survive in a spelling
+    Plex refuses. A comparison clause keeps its own literal '=' while parentheses
+    must be escaped, and both forms have to come back out exactly as they went in.
+    """
+    havings = {
+        'min() clause': 'having=min%28album.originallyAvailableAt%29',
+        'comparison clause': 'having=track.userRating%3E%3E=8',
+    }
+    for label, having in havings.items():
+        query = ('type=10&push=1&' + having +
+                 '&and=1&track.label=709338&pop=1&group=grandparentTitle&sort=titleSort&limit=102')
+        for name, raw in encodings_of(query).items():
+            playlist = FakeSmartPlaylist(raw)
+            _, _, error = update_smart_filter(playlist, sort='track.random')
+            check(f'[{label}/{name}] edit succeeds', error is None, str(error))
+
+            written = playlist.content.partition('?')[2]
+            expected = query.replace('sort=titleSort', 'sort=track.random')
+            check(f'[{label}/{name}] rewrites nothing but the sort',
+                  written == expected,
+                  f'expected {expected}\n      got      {written}')
+
+
 def test_empty_groups_are_not_reported_as_criteria():
     playlist = FakeSmartPlaylist(PATH + '?type=10&push=1&and=1&pop=1&genre=Rock')
     described = describe_smart_filter(playlist)
@@ -328,6 +354,7 @@ def main():
         test_unreadable_filters_are_still_editable,
         test_a_bad_rebuild_is_refused_before_writing,
         test_a_filter_plex_ignores_is_caught_by_the_count,
+        test_a_sort_only_edit_rewrites_nothing_but_the_sort,
         test_empty_groups_are_not_reported_as_criteria,
     ):
         print(f'\n--- {test.__name__}')
