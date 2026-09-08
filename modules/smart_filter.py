@@ -178,23 +178,55 @@ def current_definition(obj, raw_content=None):
     return definition, None
 
 
-def _with_literal_query(raw):
-    """Return the URI with a literal '?' separating its query.
+def _query_is_decoded(query):
+    """True when a query string's separators are literal rather than encoded.
 
-    Plex can hand back ``content`` percent-encoded, and ``urlsplit`` then finds no
-    query at all - so a replacement loop has nothing to iterate, silently appends
-    instead, and the caller is told the edit succeeded. Unquoting restores the
-    literal separators while leaving value-level encoding alone: a '&' inside a
-    title was doubly encoded on the way in, so one unquote leaves it as %26.
+    A real query is a series of ``key=value`` pairs, so every '&'-separated
+    segment contains a literal '='. When the body is still percent-encoded the
+    whole thing is one segment with no '=' in it at all. This can't misfire on a
+    value that legitimately contains %26 or %3D, because the surrounding
+    segments still carry their own literal '='.
     """
-    for _ in range(3):
-        if '?' in raw:
+    segments = [seg for seg in (query or '').split('&') if seg]
+    return bool(segments) and all('=' in seg for seg in segments)
+
+
+def _with_literal_query(raw):
+    """Return the URI with its query in decoded, splittable form.
+
+    Plex hands back ``content`` at varying levels of encoding: sometimes plain,
+    sometimes with the '?' as %3F, and sometimes with a literal '?' but the body
+    still encoded. The last is the dangerous one - a literal '?' makes the URI
+    look parseable while the query is a single opaque segment, so parameter
+    surgery silently appends instead of replacing and every filter clause is lost
+    when Plex decodes it. Decode until the query actually splits.
+    """
+    for _ in range(4):
+        head, sep, query = raw.partition('?')
+        if sep and _query_is_decoded(query):
             return raw
         unquoted = unquote(raw)
         if unquoted == raw:
-            break
+            return raw
         raw = unquoted
     return raw
+
+
+# Query keys that affect presentation rather than what the item matches.
+# group and having are NOT here: they change the result set.
+PRESENTATION_KEYS = {'sort', 'limit', 'type', 'includeGuids'}
+
+
+def _criteria_segments(raw):
+    """The query segments that decide what an item matches, sort/limit/type aside.
+
+    Compared before and after a write to prove an edit didn't quietly widen the
+    filter. Kept as raw segments so the comparison needs no parser and no
+    understanding of the grammar.
+    """
+    query = urlsplit(_with_literal_query(raw)).query
+    return sorted(seg for seg in (query or '').split('&')
+                  if seg and seg.split('=', 1)[0] not in PRESENTATION_KEYS)
 
 
 def _saved_params(raw, wanted):
@@ -255,6 +287,54 @@ def _replace_query_params(raw, updates):
     return urlunsplit(scheme_split._replace(query='&'.join(out)))
 
 
+def _stored_content(obj):
+    """Re-read the item's filter URI from the server, or None if it can't be read."""
+    try:
+        obj.reload()
+    except Exception:
+        pass
+    return getattr(obj, 'content', None)
+
+
+def _confirm_write(obj, original_raw, expected_criteria):
+    """Check what Plex actually stored, and undo the write if the criteria changed.
+
+    Reporting the filter we *intended* to save proves nothing - a wipe reports a
+    healthy-looking diff right up until you count the items. This compares the
+    criteria the server came back with against the ones that were meant to
+    survive, and restores the previous URI if they don't match.
+
+    Returns ``(stored_raw, error)``.
+    """
+    stored = _stored_content(obj)
+    if not stored:
+        return None, (
+            "The edit was sent, but the saved filter could not be read back to confirm it. "
+            "Check the item before relying on this change."
+        )
+
+    actual = _criteria_segments(stored)
+    if actual == expected_criteria:
+        return stored, None
+
+    # The write changed what the item matches. Put the original back.
+    restored = False
+    try:
+        key = f"{obj.key}/items{utils.joinArgs({'uri': original_raw})}"
+        obj._server.query(key, method=obj._server._session.put)
+        restored = _criteria_segments(_stored_content(obj) or '') == expected_criteria
+    except Exception:
+        restored = False
+
+    return stored, (
+        f"The edit changed what this item matches, which was not intended: "
+        f"{len(expected_criteria)} filter criteria before, {len(actual)} after. "
+        + ("The previous filter has been restored." if restored else
+           "RESTORING THE PREVIOUS FILTER FAILED - the item is left with the wrong filter. "
+           f"Its previous definition was: {unquote(original_raw)}")
+    )
+
+
 def update_smart_filter(obj, filters=None, sort=None, limit=None, libtype=None,
                         allow_empty_filter=False):
     """Update a smart playlist's or collection's saved search, preserving what wasn't passed.
@@ -305,14 +385,21 @@ def update_smart_filter(obj, filters=None, sort=None, limit=None, libtype=None,
 
         new_uri = _replace_query_params(raw, updates)
 
-        # Never report success for an edit that didn't take. This exact failure -
-        # appending instead of replacing, then claiming it worked - is what the
-        # normalization above fixes; the check makes a recurrence loud.
+        # Never report success for an edit that didn't take. Appending instead of
+        # replacing, then claiming it worked, is the failure this guards.
         mismatch = _verify_updates(new_uri, updates)
         if mismatch:
             return before, None, (
                 f"Refusing to save: the rebuilt filter doesn't match what was asked for - "
                 f"{mismatch}. Nothing was written."
+            )
+
+        # This path must not change what the item matches. Prove it before writing.
+        criteria = _criteria_segments(raw)
+        if _criteria_segments(new_uri) != criteria:
+            return before, None, (
+                "Refusing to save: rebuilding the filter to change the sort would have altered "
+                "its criteria. Nothing was written."
             )
 
         try:
@@ -321,14 +408,13 @@ def update_smart_filter(obj, filters=None, sort=None, limit=None, libtype=None,
         except Exception as e:
             return before, None, f"Could not save the filter: {type(e).__name__}: {e}"
 
-        after = dict(before) if not before.get("unparsed") else {"raw": unquote(new_uri)}
-        if sort is not None:
-            after["sort"] = sort
-        if limit is not None:
-            after["limit"] = limit
-        if libtype is not None:
-            after["libtype"] = libtype
-        return before, after, None
+        # And prove it again against what the server actually stored.
+        stored, error = _confirm_write(obj, raw, criteria)
+        if error:
+            return before, None, error
+
+        parsed, _ = _parse_tolerantly(stored)
+        return before, parsed, None
 
     # Filters are being replaced, so the saved clauses are going anyway. Take the
     # parameters not being changed from the raw query rather than the parse, so
@@ -368,4 +454,11 @@ def update_smart_filter(obj, filters=None, sort=None, limit=None, libtype=None,
     except Exception as e:
         return before, None, f"Could not save the filter: {type(e).__name__}: {e}"
 
-    return before, after, None
+    # Criteria are meant to change here, so they can't be compared to the old
+    # ones - but a request for criteria that stores none is still a wipe.
+    stored, error = _confirm_write(obj, raw, _criteria_segments(uri))
+    if error:
+        return before, None, error
+
+    parsed, _ = _parse_tolerantly(stored)
+    return before, parsed, None
