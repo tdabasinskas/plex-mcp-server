@@ -123,18 +123,24 @@ Tools for exploring and managing your Plex libraries.
 ### Media Module
 Tools for searching, inspecting, and editing specific media items.
 
+Every tool below identifies its target the same way: by `media_id` (a Plex rating key) when you have one, or by `media_title` with optional `library_name` and `libtype` to narrow the search.
+
 | Command | Description | Parameters |
 |---------|-------------|------------|
 | `media_search` | Search for media across all libraries. | `query`, `content_type` |
-| `media_get_details` | Get comprehensive details for an item. | `media_title`, `library_name`, `media_id` |
-| `media_edit_metadata` | Update tags, genres, summary, or title. | `media_title`, `library_name`, `new_title`, `new_summary`, `new_rating`, `new_release_date`, `new_genre`, `remove_genre`, `new_director`, `new_studio`, `new_tags` |
-| `media_delete` | Remove an item from Plex. | `media_title`, `library_name`, `media_id` |
-| `media_get_artwork` | Retrieve posters or background artwork. | `media_title`, `library_name`, `art_type: str` |
-| `media_set_artwork` | Set artwork from a local path or URL. | `media_title`, `library_name`, `poster_path`, `poster_url`, `background_path`, `background_url` |
-| `media_list_available_artwork` | List alternative artwork available for selection. | `media_title`, `library_name`, `art_type` |
+| `media_get_details` | Get comprehensive details for an item. | `media_title`, `media_id`, `library_name`, `libtype` |
+| `media_edit_metadata` | Update tags, genres, summary, or title. | `media_title`, `media_id`, `library_name`, `libtype`, `new_title`, `new_summary`, `new_rating`, `new_release_date`, `new_genre`, `remove_genre`, `new_director`, `new_studio`, `new_tags`, `refresh` |
+| `media_delete` | Remove an item from Plex. | `media_title`, `media_id`, `library_name`, `libtype` |
+| `media_get_artwork` | Retrieve posters or background artwork. | `media_title`, `media_id`, `library_name`, `libtype`, `image_types`, `output_format`, `output_dir` |
+| `media_set_artwork` | Set artwork from a local path or URL. | `media_title`, `media_id`, `library_name`, `libtype`, `art_type`, `filepath`, `url`, `lock` |
+| `media_list_available_artwork` | List alternative artwork available for selection. | `media_title`, `media_id`, `library_name`, `libtype`, `art_type` |
 | `media_get_match` | Show an item's current match (guid, agent, external IDs) and candidate matches to (re)match to. | `media_title`, `library_name`, `media_id`, `search_title`, `search_year`, `search_agent` |
 | `media_fix_match` | (Re)match an item to a candidate `guid`, or `auto`-match to the agent's top pick. | `media_title`, `library_name`, `media_id`, `guid`, `auto`, `search_agent` |
 | `media_unmatch` | Remove the current metadata match, leaving the item unmatched. | `media_title`, `library_name`, `media_id` |
+
+> **Identifying an item.** When a title matches more than one item, these tools change nothing and return the list of candidates instead, each with the `id` to call back with. Music is where this bites: an artist, an album and a track can all share one title, so candidate entries carry `artist`, `album` and track `index` to tell them apart. Two ways to skip the round trip - pass `libtype` (`{"media_title": "Intro", "libtype": "track"}`) to search one content type, or pass a `media_id` you already have.
+
+> **`media_edit_metadata` and `refresh`.** Edited fields are locked, so Plex's metadata agent won't overwrite them. Re-running the agent afterwards is therefore optional and off by default; pass `refresh=true` if you want it. The response always reflects the saved values.
 
 ### Playlist Module
 Manage your personal and shared playlists.

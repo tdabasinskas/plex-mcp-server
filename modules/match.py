@@ -1,64 +1,20 @@
 import json
-from plexapi.exceptions import NotFound  # type: ignore
 from mcp.types import ToolAnnotations  # type: ignore
 from modules import mcp, connect_to_plex
+from modules.resolve import resolve_media
 
 # Media types that support metadata-agent matching (Video + Audio subclasses).
 MATCHABLE_TYPES = ['movie', 'show', 'season', 'episode', 'artist', 'album', 'track']
 
 
-def _resolve_media(plex, media_title, media_id, library_name):
-    """Resolve a single media item by id or title.
+def _resolve_media(plex, media_title, media_id, library_name, libtype=None):
+    """Resolve a single matchable media item by id or title.
 
-    Returns a tuple ``(item, error)``. On success ``item`` is the Plex object and
-    ``error`` is None. When the item can't be resolved unambiguously, ``item`` is
-    None and ``error`` is a JSON string ready to return to the caller (either an
-    error object or, when the title is ambiguous, a disambiguation list mirroring
-    the convention used by ``media_get_details`` / ``media_delete``).
+    Thin wrapper over the shared resolver that narrows the accepted types to
+    those a metadata agent can match against.
     """
-    if media_id is None and not media_title:
-        return None, json.dumps({"error": "Either media_id or media_title must be provided."}, indent=4)
-
-    # Direct fetch by rating key.
-    if media_id is not None:
-        try:
-            return plex.fetchItem(media_id), None
-        except Exception as e:
-            return None, json.dumps({"error": f"Could not find media with ID {media_id}. Error: {str(e)}"}, indent=4)
-
-    # Search by title.
-    try:
-        if library_name:
-            try:
-                section = plex.library.section(library_name)
-            except NotFound:
-                return None, json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
-            results = plex.search(query=media_title, sectionId=section.key)
-        else:
-            results = plex.search(query=media_title)
-    except Exception as e:
-        return None, json.dumps({"error": f"Error searching for '{media_title}': {str(e)}"}, indent=4)
-
-    valid = [item for item in results if getattr(item, 'type', None) in MATCHABLE_TYPES]
-    if not valid:
-        return None, json.dumps({"error": f"No matchable media found matching '{media_title}'."}, indent=4)
-
-    if len(valid) > 1:
-        matches = []
-        for item in valid:
-            entry = {
-                "title": getattr(item, 'title', 'Unknown'),
-                "id": getattr(item, 'ratingKey', None),
-                "type": getattr(item, 'type', 'unknown'),
-            }
-            if hasattr(item, 'year') and getattr(item, 'year', None) is not None:
-                entry["year"] = item.year
-            if getattr(item, 'librarySectionTitle', None):
-                entry["library"] = item.librarySectionTitle
-            matches.append(entry)
-        return None, json.dumps(matches, indent=4)
-
-    return valid[0], None
+    return resolve_media(plex, media_title, media_id, library_name, libtype,
+                         allowed_types=MATCHABLE_TYPES)
 
 
 def _agent_from_guid(guid):
