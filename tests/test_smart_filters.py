@@ -48,8 +48,19 @@ QUERY = ('type=10&track.label=709338&group=grandparentTitle'
 def encodings_of(query):
     """Every form Plex has been observed to return `content` in.
 
-    The last one is the dangerous one: encoded uniformly, so decoding far enough
-    to find the query also unescapes the values.
+    The last one is the dangerous one: a literal '?' makes the URI look parseable
+    while the body is still escaped, so decoding far enough to split it also
+    unescapes the values.
+
+    'encoded uniformly' is the shape that produced the parentheses wipe: the
+    separators are escaped but the values are not escaped a second time, so
+    decoding far enough to split the query also unescapes '%28' into '('. Writing
+    that back literally makes Plex discard the filter.
+
+    That shape has a known limit, documented by
+    `test_an_escaped_ampersand_in_that_shape_is_ambiguous`: a value containing an
+    escaped '&' cannot be told from a separator once decoded. The post-write
+    count check is what covers it.
     """
     return {
         'literal ?': PATH + '?' + query,
@@ -334,6 +345,85 @@ def test_a_sort_only_edit_rewrites_nothing_but_the_sort():
                   f'expected {expected}\n      got      {written}')
 
 
+def test_grouped_filters_round_trip_whatever_their_shape():
+    """Property test over generated nested filters, not hand-picked examples.
+
+    Fixed fixtures kept confirming the shape that had already been fixed. This
+    generates push/pop trees several levels deep, with values that exercise the
+    characters that have caused trouble - parentheses, escaped ampersands and
+    spaces, operator suffixes, a clause with its own '=' - and asserts the whole
+    query comes back byte-identical except the sort.
+
+    A group structure that survives every one of these is what stops the two
+    failure directions seen in practice: a single group mangled into matching
+    everything, nested groups mangled into matching nothing.
+    """
+    import random
+
+    random.seed(11)
+    # No value carries an escaped '&': in the 'encoded uniformly' shape that is
+    # genuinely indistinguishable from a separator, and is covered separately.
+    values = ['709338', 'Johnny%20Cash', '1001', 'min%28album.originallyAvailableAt%29',
+              'track.userRating%3E%3E=6', '2019-01-01', 'a.b-c_d~e']
+    fields = ['track.label', 'track.grandparentTitle', 'having', 'group',
+              'track.userRating%3E%3E', 'artist.genre', 'album.decade']
+
+    def subtree(depth):
+        if depth == 0 or random.random() < 0.3:
+            return [f'{random.choice(fields)}={random.choice(values)}']
+        operator = random.choice(['and', 'or'])
+        parts = []
+        for index in range(random.randint(2, 4)):
+            if index:
+                parts.append(f'{operator}=1')
+            parts += subtree(depth - 1)
+        return ['push=1'] + parts + ['pop=1']
+
+    mismatches = []
+    for _ in range(200):
+        query = '&'.join(['type=10'] + subtree(random.randint(0, 3)) + ['sort=titleSort', 'limit=246'])
+        expected = query.replace('sort=titleSort', 'sort=track.random')
+        for name, raw in encodings_of(query).items():
+            playlist = FakeSmartPlaylist(raw)
+            _, _, error = update_smart_filter(playlist, sort='track.random')
+            written = playlist.content.partition('?')[2]
+            if error is not None or written != expected:
+                mismatches.append((name, error, query, written))
+
+    check('200 generated grouped filters round-trip in every encoding',
+          not mismatches,
+          (f'{len(mismatches)} failed, first:\n      shape={mismatches[0][0]}'
+           f'\n      error={mismatches[0][1]}\n      in   ={mismatches[0][2]}'
+           f'\n      out  ={mismatches[0][3]}') if mismatches else '')
+
+
+def test_an_escaped_ampersand_in_that_shape_is_ambiguous():
+    """A known limit, and the proof that the guard covers it.
+
+    When the separators are escaped but the values are not escaped again, a
+    value's '%26' and a real separator decode to the same character. Nothing can
+    recover the difference from the string alone. What must not happen is a
+    silent corruption, so this asserts the edit is refused or rolled back rather
+    than quietly rewriting the group structure.
+    """
+    query = ('type=10&push=1&artist.genre=Rock%20%26%20Roll&or=1'
+             '&track.label=709338&pop=1&sort=titleSort')
+    raw = PATH + quote('?' + unquote(query), safe='')
+
+    playlist = FakeSmartPlaylist(raw)
+    before = _criteria_segments(playlist.content)
+    _, after, error = update_smart_filter(playlist, sort='track.random')
+
+    if error is None:
+        check('an ambiguous value either round-trips or is refused',
+              _criteria_segments(playlist.content) == before,
+              'the edit succeeded but silently changed the criteria')
+    else:
+        check('an ambiguous value is refused rather than corrupted', True)
+        check('  and the criteria are intact', _criteria_segments(playlist.content) == before,
+              f'{before} -> {_criteria_segments(playlist.content)}')
+
+
 def test_empty_groups_are_not_reported_as_criteria():
     playlist = FakeSmartPlaylist(PATH + '?type=10&push=1&and=1&pop=1&genre=Rock')
     described = describe_smart_filter(playlist)
@@ -355,6 +445,8 @@ def main():
         test_a_bad_rebuild_is_refused_before_writing,
         test_a_filter_plex_ignores_is_caught_by_the_count,
         test_a_sort_only_edit_rewrites_nothing_but_the_sort,
+        test_grouped_filters_round_trip_whatever_their_shape,
+        test_an_escaped_ampersand_in_that_shape_is_ambiguous,
         test_empty_groups_are_not_reported_as_criteria,
     ):
         print(f'\n--- {test.__name__}')
