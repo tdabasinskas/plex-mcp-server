@@ -1014,7 +1014,9 @@ async def playlist_create_smart(playlist_title: str, library_name: str, filters:
         playlist_title: Title for the new smart playlist
         library_name: Library section the playlist is built from (smart playlists are single-section)
         filters: Advanced filters as a dict, e.g. {"genre": "Comedy", "year>>": 2000, "unwatched": true}.
-            Append an operator suffix (see library_get_smart_filter_options) to a field for comparisons.
+            Append an operator suffix (see library_get_smart_filter_options) to a field for
+            comparisons. No suffix on a string field means 'contains', not exact match:
+            "title" matches substrings, "title=" is exact.
         sort: Sort field(s), e.g. "addedAt:desc" or "year:asc". Comma-separate multiple fields.
         limit: Maximum number of items in the playlist
         libtype: Content type to filter (movie, show, season, episode, artist, album, track, photo).
@@ -1085,6 +1087,7 @@ async def playlist_edit_smart_filters(playlist_title: str = None, playlist_id: i
         playlist_id: ID of the smart playlist to edit (optional if playlist_title is provided)
         filters: New advanced filters as a dict, e.g. {"genre": "Drama", "year>>": 2010}.
             See library_get_smart_filter_options for available fields, operators, and values.
+            No suffix on a string field means 'contains': "title=" is the exact match.
         sort: New sort field(s), e.g. "addedAt:desc"
         limit: New maximum number of items in the playlist
     """

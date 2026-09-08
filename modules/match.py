@@ -30,9 +30,10 @@ def _resolve_media(plex, media_title, media_id, library_name):
     try:
         if library_name:
             try:
-                results = plex.library.section(library_name).search(query=media_title)
+                section = plex.library.section(library_name)
             except NotFound:
                 return None, json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+            results = plex.search(query=media_title, sectionId=section.key)
         else:
             results = plex.search(query=media_title)
     except Exception as e:

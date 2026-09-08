@@ -125,7 +125,7 @@ Tools for searching, inspecting, and editing specific media items.
 
 | Command | Description | Parameters |
 |---------|-------------|------------|
-| `media_search` | Search for media across all libraries. | `query`, `library_name`, `content_type` |
+| `media_search` | Search for media across all libraries. | `query`, `content_type` |
 | `media_get_details` | Get comprehensive details for an item. | `media_title`, `library_name`, `media_id` |
 | `media_edit_metadata` | Update tags, genres, summary, or title. | `media_title`, `library_name`, `new_title`, `new_summary`, `new_rating`, `new_release_date`, `new_genre`, `remove_genre`, `new_director`, `new_studio`, `new_tags` |
 | `media_delete` | Remove an item from Plex. | `media_title`, `library_name`, `media_id` |
@@ -158,11 +158,13 @@ Manage your personal and shared playlists.
 Smart playlists are saved searches over a **single library** that Plex keeps auto-populated, rather than a fixed list of items. The typical flow:
 
 1. Call `library_get_smart_filter_options` for the target library to see which fields you can filter/sort on and their operators. It reports fields grouped by content type (`libtypes`); call it again with a `field` (e.g. `genre`) to list that field's valid values.
-2. Call `playlist_create_smart` with a `filters` dict, e.g. `{"genre": "Comedy", "year>>": 2000, "unwatched": true}`. Append an operator suffix to a field name for comparisons (`year>>` means after that year).
+2. Call `playlist_create_smart` with a `filters` dict, e.g. `{"genre": "Comedy", "year>>": 2000, "unwatched": true}`. Append an operator's `suffix` to a field name for comparisons (`year>>` means after that year).
 3. Read the current definition anytime with `playlist_get_contents` — for a smart playlist it returns `smart: true` and a `smartFilter` object (`libtype`, `sort`, `limit`, `filters`). Items are paginated (`limit`/`offset`, with `totalItems`/`hasMore` in the response); pass `include_items=false` to fetch just the filter without enumerating a large playlist.
 4. Adjust later with `playlist_edit_smart_filters` (it overwrites the filter definition, so read it first if you want to build on the existing one).
 
 > **Note on `libtype`:** it defaults to the section's content type, which is `episode` for TV libraries and `track` for music. Set `libtype` to `show` or `artist` if you want whole shows/artists instead.
+
+> **Operators: an empty suffix is a real operator.** `library_get_smart_filter_options` returns each operator as a `suffix` to append verbatim plus what it `means`. Plex's own URL form and the form these tools accept differ by one trailing `=`, so use the reported `suffix` rather than the operator you may have seen in a Plex filter URL. On a **string** field the empty suffix means *contains*, and `=` means *is*: `{"track.title": "Love Me Tender"}` also matches `Love Me Tender (Live)`, while `{"track.title=": "Love Me Tender"}` is an exact match. Reading a saved filter back returns this same form, so `track.title=` in a `smartFilter` is already the exact-match operator, not a weakened one.
 
 > **The filter vocabulary is broader than Plex's simple dropdown.** `library_get_smart_filter_options` reports the full `listFields` set the API actually validates against — so fields like `title` or `userRating` are available even though the basic Plex filter menu omits them. Fields are returned with a fully-qualified key per content type; to filter on a non-default type use the `libtype.field` form (e.g. `artist.title`, `track.userRating>>`). Because accepted filters are broader than advertised, **always check the returned `item_count` after creating** to confirm the filter actually matched something sensible.
 
