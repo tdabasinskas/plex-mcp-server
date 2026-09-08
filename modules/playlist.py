@@ -1087,8 +1087,10 @@ async def playlist_edit_smart_filters(playlist_title: str = None, playlist_id: i
 
     Passing `filters` replaces the whole filter set rather than merging clause by
     clause, so read the current one first (playlist_get_contents with
-    include_items=false) if you mean to add to it. The response reports the
-    definition before and after the edit.
+    include_items=false) if you mean to add to it. When you don't pass `filters`,
+    the saved criteria are preserved exactly as stored - a filter too complex for
+    the reader to parse is still editable. The response reports the definition
+    before and after the edit.
 
     Args:
         playlist_title: Title of the smart playlist to edit (optional if playlist_id is provided)

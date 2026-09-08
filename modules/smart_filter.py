@@ -9,7 +9,7 @@ reconstruction.
 """
 
 from collections import deque
-from urllib.parse import parse_qsl, unquote, urlsplit
+from urllib.parse import parse_qsl, quote, unquote, urlsplit, urlunsplit
 
 from plexapi import utils  # type: ignore
 
@@ -49,16 +49,16 @@ def describe_smart_filter(obj, raw_content=None):
     except Exception as e:
         first_error = f"{type(e).__name__}: {e}"
 
-    # plexapi's parser can't represent an empty filter group and dies on one
-    # with "IndexError: pop from empty list". Plex will save such a group, and
-    # it matches nothing by definition, so dropping it can't change which items
-    # the filter selects. Retry without them rather than lose the whole filter.
+    # plexapi's parser dies with "IndexError: pop from empty list" on any filter
+    # group that ends up holding nothing. Retry with a parser that tolerates it
+    # rather than lose the whole filter.
     try:
-        result["smartFilter"] = _parse_without_empty_groups(obj, raw)
+        result["smartFilter"] = _parse_tolerantly(obj, raw)
         result["smartFilterNote"] = (
-            "The saved filter contained an empty group (a push/pop pair with nothing between it), "
-            "which plexapi's parser cannot represent. The empty group was ignored - it matches "
-            "nothing, so the filter's meaning is unchanged. smartFilterRaw is exactly as Plex stored it."
+            "The saved filter contained a group holding no criteria, which plexapi's parser "
+            "cannot represent. It was read with a tolerant parser and the empty group ignored - "
+            "an empty group constrains nothing, so the filter's meaning is unchanged. "
+            "smartFilterRaw is exactly as Plex stored it."
         )
     except Exception as e:
         result["smartFilter"] = {
@@ -69,11 +69,18 @@ def describe_smart_filter(obj, raw_content=None):
     return result
 
 
-def _parse_without_empty_groups(obj, raw):
-    """Parse a filter URI with empty push/pop groups removed.
+def _parse_tolerantly(obj, raw):
+    """Parse a filter URI with a parser that survives an empty filter group.
 
-    Mirrors plexapi's ``_parseFilters`` - which builds its feed internally and so
-    gives no way to clean it - then hands the cleaned feed to the same parser.
+    plexapi's ``_parseFilterGroups`` ends with ``currentFiltersStack.pop()``, which
+    raises IndexError whenever a group finishes having collected nothing. Two
+    things cause that, and Plex writes both: an empty ``push``/``pop`` pair, and a
+    reserved key (``sort``, ``limit``, ``type``) landing inside a group, which
+    breaks out of the loop before anything is added. A group holding nothing
+    constrains nothing, so yielding an empty result for it - and letting the
+    parent skip it - preserves the filter's meaning exactly.
+
+    Otherwise this mirrors plexapi's parser, so anything it can read reads the same.
     """
     content = urlsplit(unquote(raw))
     feed = deque()
@@ -82,27 +89,71 @@ def _parse_without_empty_groups(obj, raw):
         if value.startswith("="):
             key, value = f"{key}=", value[1:]
         feed.append((key, value))
-
-    _drop_empty_groups(feed)
-    return obj._parseQueryFeed(feed)
+    return _parse_feed(feed)
 
 
-def _drop_empty_groups(feed):
-    """Remove every ``push`` immediately followed by ``pop``, in place.
+# The query keys plexapi handles itself rather than treating as filter clauses.
+SPECIAL_KEYS = {'type', 'sort'}
+INTEGER_KEYS = {'includeGuids', 'limit'}
+AS_IS_KEYS = {'group', 'having'}
+RESERVED_KEYS = SPECIAL_KEYS | INTEGER_KEYS | AS_IS_KEYS
 
-    Repeats until none remain, since removing an inner empty group can leave its
-    parent empty in turn (push push pop pop -> push pop -> nothing).
-    """
-    removing = True
-    while removing:
-        removing = False
-        for i in range(len(feed) - 1):
-            if feed[i][0] == "push" and feed[i + 1][0] == "pop":
-                del feed[i]
-                del feed[i]
-                removing = True
-                break
-    return feed
+
+def _parse_feed(feed):
+    """Mirror of plexapi's ``_parseQueryFeed`` over an already-built feed."""
+    from plexapi import utils as plexapi_utils
+
+    parsed = {}
+    while feed:
+        key, value = feed.popleft()
+        if key in INTEGER_KEYS:
+            parsed[key] = int(value)
+        elif key in AS_IS_KEYS:
+            parsed[key] = value
+        elif key == 'type':
+            parsed['libtype'] = plexapi_utils.reverseSearchType(value)
+        elif key == 'sort':
+            parsed['sort'] = value.split(',')
+        else:
+            feed.appendleft((key, value))
+            group = _parse_groups(feed, set(RESERVED_KEYS) | {'pop'})
+            if 'filters' in parsed:
+                parsed['filters'] = {'and': [parsed['filters'], group]}
+            else:
+                parsed['filters'] = group
+    return parsed
+
+
+def _parse_groups(feed, return_on):
+    """Mirror of plexapi's ``_parseFilterGroups``, but empty groups yield {} not IndexError."""
+    stack = []
+    operator = None
+
+    while feed:
+        key, value = feed.popleft()
+        if key == 'push':
+            nested = _parse_groups(feed, return_on)
+            if nested:
+                # A group that held nothing adds nothing; dropping it keeps the
+                # filter's meaning and keeps {} out of the parent's clause list.
+                stack.append(nested)
+        elif key in return_on:
+            if key != 'pop':
+                feed.appendleft((key, value))
+            break
+        elif key in ('and', 'or'):
+            if operator and operator != key:
+                raise ValueError(
+                    'cannot have different logical operators for the same filter group')
+            operator = key
+        else:
+            stack.append({key: value})
+
+    if not operator and len(stack) > 1:
+        operator = 'and'
+    if operator:
+        return {operator: stack}
+    return stack.pop() if stack else {}
 
 
 def current_definition(obj, raw_content=None):
@@ -123,14 +174,59 @@ def current_definition(obj, raw_content=None):
     return definition, None
 
 
+def filter_clause_count(raw):
+    """How many filter clauses a saved URI carries, without parsing its structure.
+
+    Counts query segments that aren't reserved keys or group punctuation. Works on
+    the encoded string, so it needs nothing from the parser.
+    """
+    query = urlsplit(raw).query
+    if not query:
+        return 0
+    structural = RESERVED_KEYS | {'push', 'pop', 'and', 'or', 'includeGuids'}
+    return sum(1 for seg in query.split('&')
+               if seg and seg.split('=', 1)[0] not in structural)
+
+
+def _replace_query_params(raw, updates):
+    """Return ``raw`` with the named query params replaced, every other segment byte-identical.
+
+    Rewriting the string rather than re-encoding a parsed structure is what lets a
+    sort-only edit preserve filter clauses exactly - including ones no parser can
+    read. Only keys present in ``updates`` are touched.
+    """
+    scheme_split = urlsplit(raw)
+    segments = scheme_split.query.split('&') if scheme_split.query else []
+
+    out, replaced = [], set()
+    for segment in segments:
+        key = segment.split('=', 1)[0]
+        if key in updates:
+            if key not in replaced:
+                out.append(f'{key}={quote(str(updates[key]), safe="")}')
+                replaced.add(key)
+            continue  # drop any later duplicate of a key we replaced
+        out.append(segment)
+
+    for key, value in updates.items():
+        if key not in replaced:
+            out.append(f'{key}={quote(str(value), safe="")}')
+
+    return urlunsplit(scheme_split._replace(query='&'.join(out)))
+
+
 def update_smart_filter(obj, filters=None, sort=None, limit=None, libtype=None,
                         allow_empty_filter=False):
     """Update a smart playlist's or collection's saved search, preserving what wasn't passed.
 
     plexapi's ``updateFilters`` rebuilds the search URI from its arguments alone,
     so anything omitted is silently dropped - a sort-only edit erases the filters
-    and the item becomes the whole library. Read the current definition first and
-    fall back to it per parameter, so omitting something leaves it alone.
+    and the item becomes the whole library.
+
+    When ``filters`` isn't being changed, this rewrites only the parameters that
+    are, leaving every filter clause in the saved URI byte-identical. Nothing is
+    round-tripped through a parser, so a filter no parser can read is still
+    editable - which matters, because Plex writes filters plexapi cannot parse.
 
     Note this merges at the parameter level, not within ``filters``: passing
     ``filters`` replaces the whole filter set, it does not merge clause by clause.
@@ -138,17 +234,65 @@ def update_smart_filter(obj, filters=None, sort=None, limit=None, libtype=None,
     Returns ``(before, after, error)`` - the definitions either side of the edit,
     so a caller can see exactly what changed.
     """
-    raw_content = getattr(obj, 'content', None)
+    raw = getattr(obj, 'content', None)
+    if not raw:
+        return None, None, (
+            "Refusing to edit: the server returned no filter definition for this item, "
+            "so there is nothing to preserve and an edit would replace it blindly."
+        )
 
-    before, error = current_definition(obj, raw_content)
-    if error:
-        return None, None, error
+    # Read the current definition for reporting only. A filter that can't be
+    # parsed is still perfectly editable, so a failure here must not block.
+    before, parse_error = current_definition(obj, raw)
+    if before is None:
+        before = {"unparsed": True, "raw": unquote(raw), "reason": parse_error}
+
+    if filters is None:
+        # Preserve the saved filter clauses verbatim; change only what was asked for.
+        if not filter_clause_count(raw) and not allow_empty_filter:
+            return before, None, (
+                "Refusing to edit: the saved filter has no criteria, so it already matches the "
+                "entire library. Pass the filters you want, or set allow_empty_filter=true."
+            )
+        updates = {}
+        if sort is not None:
+            updates['sort'] = ','.join(sort) if isinstance(sort, list) else sort
+        if limit is not None:
+            updates['limit'] = limit
+        if libtype is not None:
+            updates['type'] = utils.searchType(libtype)
+        if not updates:
+            return before, before, None  # nothing asked for; don't write
+
+        try:
+            new_uri = _replace_query_params(raw, updates)
+            key = f"{obj.key}/items{utils.joinArgs({'uri': new_uri})}"
+            obj._server.query(key, method=obj._server._session.put)
+        except Exception as e:
+            return before, None, f"Could not save the filter: {type(e).__name__}: {e}"
+
+        after = dict(before) if not before.get("unparsed") else {"raw": unquote(new_uri)}
+        if sort is not None:
+            after["sort"] = sort
+        if limit is not None:
+            after["limit"] = limit
+        if libtype is not None:
+            after["libtype"] = libtype
+        return before, after, None
+
+    # Filters are being replaced, so the saved clauses are going anyway. Take the
+    # parameters not being changed from the raw query rather than the parse, so
+    # this path doesn't depend on the parser either.
+    saved = dict(pair for pair in
+                 (seg.split('=', 1) for seg in (urlsplit(raw).query or '').split('&') if '=' in seg)
+                 if pair[0] in ('sort', 'limit', 'type'))
 
     after = {
-        "filters": before.get("filters") if filters is None else filters,
-        "sort": before.get("sort") if sort is None else sort,
-        "limit": before.get("limit") if limit is None else limit,
-        "libtype": before.get("libtype") if libtype is None else libtype,
+        "filters": filters,
+        "sort": sort if sort is not None else (unquote(saved['sort']).split(',') if 'sort' in saved else None),
+        "limit": limit if limit is not None else (int(saved['limit']) if 'limit' in saved else None),
+        "libtype": libtype if libtype is not None else (
+            utils.reverseSearchType(saved['type']) if 'type' in saved else None),
     }
 
     # An empty filter set matches the entire library. That is almost never what
