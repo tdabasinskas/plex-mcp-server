@@ -967,8 +967,10 @@ async def collection_edit_smart_filters(collection_title: str = None, collection
 
     Passing `filters` replaces the whole filter set rather than merging clause by
     clause, so read the current one first (collection_get_contents with
-    include_items=false) if you mean to add to it. The response reports the
-    definition before and after the edit.
+    include_items=false) if you mean to add to it. When you don't pass `filters`,
+    the saved criteria are preserved exactly as stored - a filter too complex for
+    the reader to parse is still editable. The response reports the definition
+    before and after the edit.
 
     Args:
         collection_title: Title of the smart collection to edit (optional if collection_id is provided)
