@@ -1,5 +1,6 @@
 from modules import mcp, connect_to_plex
 from modules.resolve import resolve_media, describe_item
+from modules.tags import apply_tags, read_tags, supported_tag_types
 from typing import List
 from datetime import datetime
 import base64
@@ -444,29 +445,28 @@ def get_media_details(media):
             except:
                 pass
     
-    # Add collections
-    if hasattr(media, 'genres') and media.genres:
-        details['genres'] = [genre.tag for genre in media.genres]
-    
-    if hasattr(media, 'directors') and media.directors:
-        details['directors'] = [director.tag for director in media.directors]
-    
-    if hasattr(media, 'writers') and media.writers:
-        details['writers'] = [writer.tag for writer in media.writers]
-    
+    # Every tag collection the item carries - genres, styles, moods, labels and
+    # the rest - keyed by its plural name. These are what media_edit_metadata's
+    # add_tags / remove_tags operate on, so a caller can read, edit and re-read.
+    details.update(read_tags(media))
+
+    # Actors aren't editable through the tag mixins, so they aren't in read_tags.
     if hasattr(media, 'actors') and media.actors:
         details['actors'] = [actor.tag for actor in media.actors]
-    
+
+    # Which tag types this item accepts at all, so a caller can see that a track
+    # takes moods but not styles without having to try it.
+    details['editableTagTypes'] = supported_tag_types(media)
+
     return details
 
 @mcp.tool()
 async def media_edit_metadata(media_title: str = None, media_id: int = None, library_name: str = None,
                         libtype: str = None,
                         new_title: str = None, new_summary: str = None, new_rating: float = None,
-                        new_release_date: str = None,
-                        new_genre: str = None, remove_genre: str = None,
-                        new_director: str = None, new_studio: str = None,
-                        new_tags: List[str] = None, refresh: bool = False) -> str:
+                        new_release_date: str = None, new_studio: str = None,
+                        add_tags: dict = None, remove_tags: dict = None,
+                        refresh: bool = False) -> str:
     """Edit metadata for a specific media item.
 
     Identify the item by media_id when you have it. When identifying by title and
@@ -484,13 +484,23 @@ async def media_edit_metadata(media_title: str = None, media_id: int = None, lib
         new_summary: New summary/description
         new_rating: New rating (0-10)
         new_release_date: New release date (YYYY-MM-DD)
-        new_genre: New genre to add
-        remove_genre: Genre to remove
-        new_director: New director to add (movies only)
         new_studio: New studio to set
-        new_tags: List of tags to add
+        add_tags: Tags to add, as a dict keyed by tag type, e.g.
+            {"genre": ["Rap"], "style": ["Trap"], "mood": ["Aggressive"]}. A single
+            string works where a list would. Valid types: collection, country,
+            director, genre, label, mood, producer, similarArtist, style, writer -
+            but which apply depends on the item (a track has moods and no styles; a
+            movie has writers and no moods). Naming a type the item doesn't support
+            returns an error listing the ones it does. Tags already present are
+            skipped rather than duplicated.
+        remove_tags: Tags to remove, same shape as add_tags. Tags that aren't there
+            are skipped.
         refresh: Re-run the metadata agent after editing. Off by default - edited
             fields are locked, so a refresh mostly costs time.
+
+    Use media_get_details to read an item's current tags, and
+    library_get_smart_filter_options with a `field` to list the valid values for a
+    tag type in a library.
     """
     try:
         plex = connect_to_plex()
@@ -535,44 +545,6 @@ async def media_edit_metadata(media_title: str = None, media_id: int = None, lib
             except Exception as e:
                 return fail(f"Error setting studio: {str(e)}")
 
-        # Handle genres using the appropriate mixin methods
-        if new_genre:
-            if not hasattr(media, 'addGenre'):
-                return fail(f"A {media.type} doesn't support adding genres.")
-            try:
-                # Check if genre already exists
-                existing_genres = [g.tag.lower() for g in getattr(media, 'genres', [])]
-                if new_genre.lower() not in existing_genres:
-                    media.addGenre(new_genre)
-                    changes_made.append(f"added genre '{new_genre}'")
-            except Exception as e:
-                return fail(f"Error adding genre: {str(e)}")
-
-        if remove_genre:
-            if not hasattr(media, 'removeGenre'):
-                return fail(f"A {media.type} doesn't support removing genres.")
-            try:
-                # Find the genre object by tag name
-                matching_genres = [g for g in media.genres if g.tag.lower() == remove_genre.lower()]
-                if matching_genres:
-                    media.removeGenre(matching_genres[0])
-                    changes_made.append(f"removed genre '{remove_genre}'")
-            except Exception as e:
-                return fail(f"Error removing genre: {str(e)}")
-
-        # Handle directors using the appropriate mixin methods
-        if new_director:
-            if not hasattr(media, 'addDirector'):
-                return fail(f"A {media.type} doesn't support adding directors.")
-            try:
-                # Check if director already exists
-                existing_directors = [d.tag.lower() for d in getattr(media, 'directors', [])]
-                if new_director.lower() not in existing_directors:
-                    media.addDirector(new_director)
-                    changes_made.append(f"added director '{new_director}'")
-            except Exception as e:
-                return fail(f"Error adding director: {str(e)}")
-
         if new_release_date:
             if not hasattr(media, 'editOriginallyAvailable'):
                 return fail(f"A {media.type} doesn't support editing release dates.")
@@ -586,19 +558,12 @@ async def media_edit_metadata(media_title: str = None, media_id: int = None, lib
             except Exception as e:
                 return fail(f"Error updating release date: {str(e)}")
 
-        # Handle tags/labels
-        if new_tags:
-            if not hasattr(media, 'addLabel'):
-                return fail(f"A {media.type} doesn't support adding tags/labels.")
-            for tag in new_tags:
-                try:
-                    # Check if tag already exists
-                    existing_labels = [l.tag.lower() for l in getattr(media, 'labels', [])]
-                    if tag.lower() not in existing_labels:
-                        media.addLabel(tag)
-                        changes_made.append(f"added tag '{tag}'")
-                except Exception as e:
-                    return fail(f"Error adding tag '{tag}': {str(e)}")
+        tag_changes, tag_error = apply_tags(media, add_tags, remove_tags)
+        changes_made.extend(tag_changes)
+        if tag_error:
+            # Report what did land before the failure, so the caller knows the
+            # item's state rather than having to re-read it to find out.
+            return json.dumps({"error": tag_error, "changes_applied": changes_made}, indent=4)
 
         # Re-run the metadata agent. Off by default: the edits above lock the
         # fields they touch, so a refresh mostly costs time.

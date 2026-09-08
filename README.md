@@ -128,8 +128,8 @@ Every tool below identifies its target the same way: by `media_id` (a Plex ratin
 | Command | Description | Parameters |
 |---------|-------------|------------|
 | `media_search` | Search for media across all libraries. | `query`, `content_type` |
-| `media_get_details` | Get comprehensive details for an item. | `media_title`, `media_id`, `library_name`, `libtype` |
-| `media_edit_metadata` | Update tags, genres, summary, or title. | `media_title`, `media_id`, `library_name`, `libtype`, `new_title`, `new_summary`, `new_rating`, `new_release_date`, `new_genre`, `remove_genre`, `new_director`, `new_studio`, `new_tags`, `refresh` |
+| `media_get_details` | Get comprehensive details for an item, including every tag it carries. | `media_title`, `media_id`, `library_name`, `libtype` |
+| `media_edit_metadata` | Update an item's tags, summary, rating, or title. | `media_title`, `media_id`, `library_name`, `libtype`, `new_title`, `new_summary`, `new_rating`, `new_release_date`, `new_studio`, `add_tags`, `remove_tags`, `refresh` |
 | `media_delete` | Remove an item from Plex. | `media_title`, `media_id`, `library_name`, `libtype` |
 | `media_get_artwork` | Retrieve posters or background artwork. | `media_title`, `media_id`, `library_name`, `libtype`, `image_types`, `output_format`, `output_dir` |
 | `media_set_artwork` | Set artwork from a local path or URL. | `media_title`, `media_id`, `library_name`, `libtype`, `art_type`, `filepath`, `url`, `lock` |
@@ -139,6 +139,29 @@ Every tool below identifies its target the same way: by `media_id` (a Plex ratin
 | `media_unmatch` | Remove the current metadata match, leaving the item unmatched. | `media_title`, `media_id`, `library_name`, `libtype` |
 
 > **Identifying an item.** When a title matches more than one item, these tools change nothing and return the list of candidates instead, each with the `id` to call back with. Music is where this bites: an artist, an album and a track can all share one title, so candidate entries carry `artist`, `album` and track `index` to tell them apart. Two ways to skip the round trip - pass `libtype` (`{"media_title": "Intro", "libtype": "track"}`) to search one content type, or pass a `media_id` you already have.
+
+> **Tags.** Plex hangs ten kinds of tag off media, and `media_edit_metadata` edits them through one pair of parameters keyed by tag type rather than a parameter each:
+>
+> ```json
+> {"media_id": 101,
+>  "add_tags":    {"genre": ["Rap"], "style": ["Trap", "Cloud Rap"], "mood": ["Aggressive"]},
+>  "remove_tags": {"label": ["needs-review"]}}
+> ```
+>
+> Which types apply depends on the item — a track has moods but no styles, a movie has writers but no moods. `media_get_details` reports every tag an item carries plus an `editableTagTypes` list, so you can read, edit and re-read without guessing; naming a type the item doesn't support returns an error listing the ones it does. Tags already present are skipped rather than duplicated, and a single string works anywhere a list does. Use `library_get_smart_filter_options` with a `field` to list a tag type's valid values in a library.
+>
+> | | Movie | Show | Season | Episode | Artist | Album | Track |
+> |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+> | `collection` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+> | `country` | ✓ | | | | ✓ | | |
+> | `director` | ✓ | | | ✓ | | | |
+> | `genre` | ✓ | ✓ | | | ✓ | ✓ | ✓ |
+> | `label` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+> | `mood` | | | | | ✓ | ✓ | ✓ |
+> | `producer` | ✓ | | | | | | |
+> | `similarArtist` | | | | | ✓ | | |
+> | `style` | | | | | ✓ | ✓ | |
+> | `writer` | ✓ | | | ✓ | | | |
 
 > **`media_edit_metadata` and `refresh`.** Edited fields are locked, so Plex's metadata agent won't overwrite them. Re-running the agent afterwards is therefore optional and off by default; pass `refresh=true` if you want it. The response always reflects the saved values.
 
