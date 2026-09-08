@@ -1,5 +1,5 @@
 from modules import mcp, connect_to_plex
-from modules.smart_filter import describe_smart_filter
+from modules.smart_filter import describe_smart_filter, update_smart_filter
 from typing import List
 from plexapi.playlist import Playlist # type: ignore
 from plexapi.exceptions import NotFound, BadRequest  # type: ignore
@@ -1077,11 +1077,18 @@ async def playlist_create_smart(playlist_title: str, library_name: str, filters:
 
 @mcp.tool()
 async def playlist_edit_smart_filters(playlist_title: str = None, playlist_id: int = None,
-                                      filters: dict = None, sort: str = None, limit: int = None) -> str:
+                                      filters: dict = None, sort: str = None, limit: int = None,
+                                      libtype: str = None, allow_empty_filter: bool = False) -> str:
     """Update the filter definition of an existing smart playlist.
 
-    This replaces the smart playlist's search criteria; Plex re-evaluates it immediately.
-    Only works on smart playlists - use playlist_edit for a regular playlist's title/summary.
+    Anything you don't pass is left as it is, so a sort-only edit keeps the existing
+    criteria. Plex re-evaluates the playlist immediately. Only works on smart
+    playlists - use playlist_edit for a regular playlist's title/summary.
+
+    Passing `filters` replaces the whole filter set rather than merging clause by
+    clause, so read the current one first (playlist_get_contents with
+    include_items=false) if you mean to add to it. The response reports the
+    definition before and after the edit.
 
     Args:
         playlist_title: Title of the smart playlist to edit (optional if playlist_id is provided)
@@ -1089,8 +1096,14 @@ async def playlist_edit_smart_filters(playlist_title: str = None, playlist_id: i
         filters: New advanced filters as a dict, e.g. {"genre": "Drama", "year>>": 2010}.
             See library_get_smart_filter_options for available fields, operators, and values.
             No suffix on a string field means 'contains': "title=" is the exact match.
-        sort: New sort field(s), e.g. "addedAt:desc"
-        limit: New maximum number of items in the playlist
+            Omit to keep the current filters.
+        sort: New sort field(s), e.g. "addedAt:desc". Omit to keep the current sort.
+        limit: New maximum number of items. Omit to keep the current limit.
+        libtype: New content type (movie, show, season, episode, artist, album, track).
+            Omit to keep the current one.
+        allow_empty_filter: Permit saving a filter with no criteria, which matches the
+            entire library. Refused by default, since it destroys the existing
+            definition and is rarely intended.
     """
     try:
         plex = connect_to_plex()
@@ -1106,9 +1119,14 @@ async def playlist_edit_smart_filters(playlist_title: str = None, playlist_id: i
             }, indent=4)
 
         try:
-            playlist.updateFilters(limit=limit, sort=sort, filters=filters)
+            before, after, error = update_smart_filter(
+                playlist, filters=filters, sort=sort, limit=limit, libtype=libtype,
+                allow_empty_filter=allow_empty_filter)
         except BadRequest as e:
             return json.dumps({"status": "error", "message": f"Invalid smart playlist filters: {str(e)}"}, indent=4)
+
+        if error:
+            return json.dumps({"status": "error", "message": error, "current_filter": before}, indent=4)
 
         playlist.reload()
         return json.dumps({
@@ -1117,7 +1135,9 @@ async def playlist_edit_smart_filters(playlist_title: str = None, playlist_id: i
             "data": {
                 "title": playlist.title,
                 "ratingKey": playlist.ratingKey,
-                "item_count": playlist.leafCount if hasattr(playlist, 'leafCount') else None
+                "item_count": playlist.leafCount if hasattr(playlist, 'leafCount') else None,
+                "filter_before": before,
+                "filter_after": after
             }
         }, indent=4)
     except Exception as e:
