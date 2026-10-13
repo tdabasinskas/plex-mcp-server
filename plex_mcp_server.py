@@ -116,6 +116,12 @@ from modules.media import (
     media_set_artwork,
     media_list_available_artwork  
 )  
+# Match module functions
+from modules.match import (
+    media_get_match,
+    media_fix_match,
+    media_unmatch
+)
 from modules.watchlist import watchlist_list, watchlist_search, watchlist_add, watchlist_remove
 
 # Client module functions
