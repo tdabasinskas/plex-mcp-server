@@ -11,6 +11,7 @@ from functools import wraps
 import aiohttp
 from plexapi.myplex import MyPlexAccount
 
+from mcp.types import ToolAnnotations  # type: ignore
 from modules import mcp, connect_to_plex
 from modules.profiles import server_for_user
 
@@ -214,7 +215,7 @@ def _error(exc):
     return json.dumps({"status": "error", "message": message})
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 @_with_home_profile
 async def watchlist_list(offset: int = 0, limit: int = 50, home_user_id: int = None, pin: str = None, username: str = None, include_state: bool = True) -> str:
     """List the PLEX_TOKEN account's Watchlist, including titles outside the library.
@@ -243,7 +244,7 @@ async def watchlist_list(offset: int = 0, limit: int = 50, home_user_id: int = N
         return _error(exc)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 @_with_home_profile
 async def watchlist_search(query: str, content_type: str = None, limit: int = 20, home_user_id: int = None, pin: str = None, username: str = None) -> str:
     """Search Plex Discover for movie/show GUIDs to add to the Watchlist.

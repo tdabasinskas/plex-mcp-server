@@ -7,6 +7,7 @@ import time
 import asyncio
 from typing import List, Dict, Optional, Union, Any, Tuple
 
+from mcp.types import ToolAnnotations  # type: ignore
 from modules import mcp, connect_to_plex
 from plexapi.exceptions import NotFound, Unauthorized
 from plexapi.client import PlexClient
@@ -102,7 +103,7 @@ def _find_client(plex, client_identifier: str) -> Tuple[Optional[Any], Optional[
     
     return None, session, None
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def client_list(include_details: bool = True, active_only: bool = False) -> str:
     """List all available Plex clients including idle players.
     
@@ -222,7 +223,7 @@ async def client_list(include_details: bool = True, active_only: bool = False) -
             "message": f"Error listing clients: {str(e)}"
         })
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def client_get_details(client_name: str) -> str:
     """Get detailed information about a specific Plex client.
     
@@ -294,7 +295,7 @@ async def client_get_details(client_name: str) -> str:
             "message": f"Error getting client details: {str(e)}"
         })
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def client_get_timelines(client_name: str) -> str:
     """Get the current timeline information for a specific Plex client.
     

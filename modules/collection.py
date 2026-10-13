@@ -1,11 +1,12 @@
 from plexapi.collection import Collection # type: ignore
 from typing import List, Dict, Any
+from mcp.types import ToolAnnotations  # type: ignore
 from modules import mcp, connect_to_plex
 import os
 from plexapi.exceptions import NotFound, BadRequest  # type: ignore
 import json
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def collection_list(library_name: str = None) -> str:
     """List all collections on the Plex server or in a specific library.
     

@@ -5,6 +5,7 @@ import asyncio
 from plexapi import utils
 from plexapi.playlist import Playlist # type: ignore
 from plexapi.exceptions import NotFound, BadRequest  # type: ignore
+from mcp.types import ToolAnnotations  # type: ignore
 import os
 import requests
 import base64
@@ -17,7 +18,7 @@ def _playlist_by_id(plex, playlist_id):
 
 
 # Functions for playlists and collections
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def playlist_list(library_name: str = None, content_type: str = None, username: str = None) -> str:
     """List all playlists on the Plex server.
     
@@ -731,7 +732,7 @@ async def playlist_delete(playlist_title: str = None, playlist_id: int = None, u
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def playlist_get_contents(playlist_title: str = None, playlist_id: int = None, username: str = None) -> str:
     """Get the contents of a playlist.
     
@@ -887,7 +888,7 @@ def _smart_error(exc):
     return json.dumps({"status": "error", "message": message})
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def playlist_get_smart_filter_options(library_name: str, field: Optional[str] = None,
                                           libtype: Optional[str] = None, username: Optional[str] = None) -> str:
     """Discover fields, operators, sort options or field choices for smart playlists.

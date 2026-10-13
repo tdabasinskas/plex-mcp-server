@@ -1,5 +1,6 @@
 import json
 import requests
+from mcp.types import ToolAnnotations # type: ignore
 import aiohttp
 import asyncio
 from plexapi.exceptions import NotFound # type: ignore
@@ -29,7 +30,7 @@ async def async_get_json(session, url, headers):
             raise Exception(f"Plex API error {status}: {error_msg}")
         return await response.json()
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def library_list() -> str:
     """List all available libraries on the Plex server."""
     try:
@@ -54,7 +55,7 @@ async def library_list() -> str:
     except Exception as e:
         return json.dumps({"error": f"Error listing libraries: {str(e)}"})
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def library_get_stats(library_name: str) -> str:
     """Get statistics for a specific library.
     
@@ -368,7 +369,7 @@ async def library_scan(library_name: str, path: Optional[str] = None) -> str:
     except Exception as e:
         return json.dumps({"error": f"Error scanning library: {str(e)}"})
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def library_get_details(library_name: str) -> str:
     """Get detailed information about a specific library, including folder paths and settings.
     
@@ -437,7 +438,7 @@ async def library_get_details(library_name: str) -> str:
     except Exception as e:
         return json.dumps({"error": f"Error getting library details: {str(e)}"})
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def library_get_recently_added(count: int = 50, library_name: Optional[str] = None) -> str:
     """Get recently added media across all libraries or in a specific library.
     
@@ -565,7 +566,7 @@ async def library_get_recently_added(count: int = 50, library_name: Optional[str
     except Exception as e:
         return json.dumps({"error": f"Error getting recently added items: {str(e)}"})
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def library_get_contents(
     library_name: Optional[str] = None,
     unwatched: bool = False, 

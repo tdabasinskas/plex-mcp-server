@@ -1,3 +1,4 @@
+from mcp.types import ToolAnnotations  # type: ignore
 from modules import mcp, connect_to_plex
 from modules.profiles import server_for_user
 import asyncio
@@ -7,7 +8,7 @@ import base64
 import os
 import json
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def media_search(query: str, content_type: str = None) -> str:
     """Search for media across all libraries.
     
@@ -205,7 +206,7 @@ async def media_search(query: str, content_type: str = None) -> str:
             "message": f"Error searching: {str(e)}"
         })
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def media_get_details(media_title: str = None, media_id: int = None, library_name: str = None, username: str = None) -> str:
     """Get detailed information about a specific media item using PlexAPI's Media and Mixin functions.
     
@@ -793,7 +794,7 @@ async def media_edit_metadata(media_title: str, library_name: str = None,
     except Exception as e:
         return f"Error editing metadata: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def media_get_artwork(media_title: str = None, media_id: int = None, library_name: str = None,
                          image_types: List[str] = ["poster"], output_format: str = "base64",
                          output_dir: str = "./") -> str:
@@ -1219,7 +1220,7 @@ async def media_set_artwork(media_title: str, library_name: str = None,
     except Exception as e:
         return f"Error setting {art_type} artwork: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def media_list_available_artwork(media_title: str = None, media_id: int = None, library_name: str = None, art_type: str = "poster") -> str:
     """List all available artwork for a specific media item.
     

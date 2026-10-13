@@ -1,9 +1,10 @@
 import json
 from typing import Optional
+from mcp.types import ToolAnnotations  # type: ignore
 from modules import mcp, connect_to_plex
 
 # Functions for sessions and playback
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def sessions_get_active(unused: str = None) -> str:
     """Get information about current playback sessions, including IP addresses.
     
@@ -163,7 +164,7 @@ async def sessions_get_active(unused: str = None) -> str:
             "message": f"Error getting active sessions: {str(e)}"
         })
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def sessions_get_media_playback_history(media_title: str = None, library_name: str = None, media_id: int = None) -> str:
     """Get playback history for a specific media item.
     

@@ -1,3 +1,4 @@
+from mcp.types import ToolAnnotations  # type: ignore
 from modules import mcp, connect_to_plex
 from plexapi.server import PlexServer # type: ignore
 import os
@@ -9,7 +10,7 @@ from modules.profiles import server_for_user, ProfileAccessError
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def user_search_users(search_term: str = None) -> str:
     """Search for users with names, usernames, or emails containing the search term, or list all users if no search term is provided.
     
@@ -102,7 +103,7 @@ async def user_search_users(search_term: str = None) -> str:
     except Exception as e:
         return json.dumps({"error": f"Error searching users: {str(e)}"})
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def user_list_all_users() -> str:
     """List all users (owner, home users, and shared users) with their IDs and types.
     
@@ -164,7 +165,7 @@ async def user_list_all_users() -> str:
         return json.dumps({"error": f"Error listing users: {str(e)}"})
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def user_get_info(username: str = None) -> str:
     """Get detailed information about a specific Plex user.
     
@@ -255,7 +256,7 @@ async def user_get_info(username: str = None) -> str:
     except Exception as e:
         return json.dumps({"error": f"Error getting user info: {str(e)}"})
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def user_get_on_deck(username: str = None) -> str:
     """Get on deck (in progress) media for a specific user.
     
@@ -344,7 +345,7 @@ async def user_get_on_deck(username: str = None) -> str:
     except Exception as e:
         return json.dumps({"error": f"Error getting on-deck items: {str(e)}"})
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def user_get_continue_watching(limit: int = 10, username: str = None, user_id: int = None) -> str:
     """Get items the user has partially watched and can continue.
     
@@ -420,7 +421,7 @@ async def user_get_continue_watching(limit: int = 10, username: str = None, user
             "message": str(e) if isinstance(e, ProfileAccessError) else "Error getting continue watching for the selected profile"
         })
     
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def user_get_watch_history(username: str = None, limit: int = 10, content_type: str = None, user_id: int = None) -> str:
     """Get recent watch history for a specific user.
     
@@ -568,7 +569,7 @@ async def user_get_watch_history(username: str = None, limit: int = 10, content_
     except Exception as e:
         return json.dumps({"error": f"Error getting watch history: {str(e)}"})
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def user_get_statistics(time_period: str = "last_24_hours", username: str = None) -> str:
     """Get statistics about user watch activity over different time periods.
     
