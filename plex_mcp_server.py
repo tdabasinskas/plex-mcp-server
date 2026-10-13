@@ -321,6 +321,12 @@ def _transport_security_settings() -> TransportSecuritySettings:
     )
 
 
+def _stateless_http() -> bool:
+    """MCP_STATELESS_HTTP=true serves Streamable HTTP without sessions (no
+    Mcp-Session-Id), which suits a load balancer or MCP gateway in front."""
+    return os.getenv("MCP_STATELESS_HTTP", "").strip().lower() in ("1", "true", "yes")
+
+
 class _SSEASGIApp:
     """Raw ASGI endpoint for the SSE stream (see _StreamableHTTPASGIApp for why a
     class instance rather than a function).
@@ -401,6 +407,9 @@ def create_streamable_http_app(mcp_server: Server, debug: bool = False, path: st
     session_manager = StreamableHTTPSessionManager(
         app=mcp_server,
         security_settings=_transport_security_settings(),
+        # Stateless: every request stands alone, so a restart of this server never
+        # leaves a client or gateway holding a session id the server no longer knows.
+        stateless=_stateless_http(),
     )
 
     # Keep legacy SSE available while clients migrate to Streamable HTTP.
