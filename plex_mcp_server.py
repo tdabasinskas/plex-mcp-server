@@ -100,7 +100,10 @@ from modules.collection import (
     collection_create,
     collection_add_to,
     collection_remove_from,
-    collection_edit
+    collection_edit,
+    collection_get_contents,
+    collection_create_smart,
+    collection_edit_smart_filters
 )
 # Media module functions
 from modules.media import (

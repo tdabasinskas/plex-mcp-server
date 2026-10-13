@@ -1,10 +1,15 @@
 from plexapi.collection import Collection # type: ignore
 from typing import List, Dict, Any
-from mcp.types import ToolAnnotations  # type: ignore
 from modules import mcp, connect_to_plex
+from modules.smart_filter import describe_smart_filter, update_smart_filter
 import os
 from plexapi.exceptions import NotFound, BadRequest  # type: ignore
+from mcp.types import ToolAnnotations  # type: ignore
 import json
+
+# Default page size when listing collection contents without an explicit limit,
+# so large collections don't overflow a response.
+DEFAULT_CONTENTS_PAGE = 200
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def collection_list(library_name: str = None) -> str:
@@ -61,6 +66,12 @@ async def collection_list(library_name: str = None) -> str:
                     "ID": collection.ratingKey,
                     "items": collection.childCount
                 }
+                # For smart collections, include the current filter definition
+                if collection.smart:
+                    try:
+                        collection_info["smartFilter"] = collection.filters()
+                    except Exception:
+                        pass
                 lib_collections.append(collection_info)
             
             libraries_collections[library.title] = {
@@ -81,6 +92,12 @@ async def collection_list(library_name: str = None) -> str:
                     "ID": collection.ratingKey,
                     "items": collection.childCount
                 }
+                # For smart collections, include the current filter definition
+                if collection.smart:
+                    try:
+                        collection_info["smartFilter"] = collection.filters()
+                    except Exception:
+                        pass
                 lib_collections.append(collection_info)
             
             libraries_collections[library.title] = {
@@ -242,12 +259,12 @@ async def collection_add_to(collection_title: str = None, collection_id: int = N
                                         collection = c
                                         library = section
                                         break
-                                if collection:
+                                if collection is not None:
                                     break
                             except:
                                 continue
                 
-                if not collection:
+                if collection is None:
                     return json.dumps({"error": f"Collection with ID '{collection_id}' not found"}, indent=4)
             except Exception as e:
                 return json.dumps({"error": f"Error fetching collection by ID: {str(e)}"}, indent=4)
@@ -428,12 +445,12 @@ async def collection_remove_from(collection_title: str = None, collection_id: in
                                     if c.ratingKey == collection_id:
                                         collection = c
                                         break
-                                if collection:
+                                if collection is not None:
                                     break
                             except:
                                 continue
                 
-                if not collection:
+                if collection is None:
                     return json.dumps({"error": f"Collection with ID '{collection_id}' not found"}, indent=4)
             except Exception as e:
                 return json.dumps({"error": f"Error fetching collection by ID: {str(e)}"}, indent=4)
@@ -549,12 +566,12 @@ async def collection_delete(collection_title: str = None, collection_id: int = N
                                     if c.ratingKey == collection_id:
                                         collection = c
                                         break
-                                if collection:
+                                if collection is not None:
                                     break
                             except:
                                 continue
                 
-                if not collection:
+                if collection is None:
                     return json.dumps({"error": f"Collection with ID '{collection_id}' not found"}, indent=4)
                 
                 # Get the collection title to return in the message
@@ -669,12 +686,12 @@ async def collection_edit(collection_title: str = None, collection_id: int = Non
                                     if c.ratingKey == collection_id:
                                         collection = c
                                         break
-                                if collection:
+                                if collection is not None:
                                     break
                             except:
                                 continue
                 
-                if not collection:
+                if collection is None:
                     return json.dumps({"error": f"Collection with ID '{collection_id}' not found"}, indent=4)
             except Exception as e:
                 return json.dumps({"error": f"Error fetching collection by ID: {str(e)}"}, indent=4)
@@ -805,3 +822,339 @@ async def collection_edit(collection_title: str = None, collection_id: int = Non
         }, indent=4)
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
+
+
+def _resolve_collection(plex, collection_title=None, collection_id=None, library_name=None):
+    """Resolve a collection by id, or by title within a library.
+
+    Returns a tuple (collection, error_response). On success, collection is the
+    matched Collection and error_response is None. On failure or ambiguity,
+    collection is None and error_response is a JSON string ready to return.
+    """
+    if not collection_id and not collection_title:
+        return None, json.dumps({"error": "Either collection_id or collection_title must be provided"}, indent=4)
+
+    # Fetch directly by id when provided
+    if collection_id:
+        try:
+            try:
+                collection = plex.fetchItem(collection_id)
+            except Exception:
+                # Fall back to scanning movie/show library collections by ratingKey
+                collection = None
+                for section in plex.library.sections():
+                    if section.type in ['movie', 'show']:
+                        try:
+                            collection = next((c for c in section.collections() if c.ratingKey == collection_id), None)
+                        except Exception:
+                            continue
+                        if collection is not None:
+                            break
+            if collection is None:
+                return None, json.dumps({"error": f"Collection with ID '{collection_id}' not found"}, indent=4)
+            return collection, None
+        except Exception as e:
+            return None, json.dumps({"error": f"Error fetching collection by ID: {str(e)}"}, indent=4)
+
+    # Otherwise match by title within a specific library
+    if not library_name:
+        return None, json.dumps({"error": "Library name is required when resolving by collection title"}, indent=4)
+    try:
+        library = plex.library.section(library_name)
+    except NotFound:
+        return None, json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+
+    matching = [c for c in library.collections() if c.title.lower() == collection_title.lower()]
+    if not matching:
+        return None, json.dumps({"error": f"Collection '{collection_title}' not found in library '{library_name}'"}, indent=4)
+    if len(matching) > 1:
+        # Ambiguous title: return the candidates so the caller can pick an id
+        matches = [{"title": c.title, "id": c.ratingKey, "library": library_name} for c in matching]
+        return None, json.dumps(matches, indent=4)
+    return matching[0], None
+
+
+@mcp.tool()
+async def collection_create_smart(collection_title: str, library_name: str, filters: dict = None,
+                                  sort: str = None, limit: int = None, libtype: str = None,
+                                  summary: str = None) -> str:
+    """Create a smart collection that Plex keeps auto-populated from a library search.
+
+    Unlike collection_create (a fixed list of items), a smart collection is a saved filter
+    scoped to a single library section. Use library_get_smart_filter_options first to
+    discover the available filter fields, operators, sort fields, and valid values.
+
+    Args:
+        collection_title: Title for the new smart collection
+        library_name: Library section the collection is built from (smart collections are single-section)
+        filters: Advanced filters as a dict, e.g. {"genre": "Comedy", "year>>": 2000, "unwatched": true}.
+            Append an operator suffix (see library_get_smart_filter_options) to a field for
+            comparisons. No suffix on a string field means 'contains', not exact match:
+            "title" matches substrings, "title=" is exact.
+        sort: Sort field(s), e.g. "addedAt:desc" or "year:asc". Comma-separate multiple fields.
+        limit: Maximum number of items in the collection
+        libtype: Content type to filter (movie, show, season, episode, artist, album, track, photo).
+            Defaults to the section's type - note this is 'episode' for TV libraries and 'track' for
+            music, so set libtype='show'/'artist' if you want whole shows/artists.
+        summary: Optional description for the collection
+    """
+    try:
+        plex = connect_to_plex()
+        try:
+            library = plex.library.section(library_name)
+        except NotFound:
+            return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+
+        # Refuse to duplicate an existing collection title in this library
+        try:
+            existing = next((c for c in library.collections() if c.title.lower() == collection_title.lower()), None)
+            if existing:
+                return json.dumps({"status": "error", "message": f"Collection '{collection_title}' already exists in library '{library_name}'"}, indent=4)
+        except Exception:
+            pass  # If we can't check existing collections, proceed anyway
+
+        try:
+            collection = library.createCollection(
+                title=collection_title,
+                smart=True,
+                filters=filters,
+                sort=sort,
+                limit=limit,
+                libtype=libtype
+            )
+        except BadRequest as e:
+            return json.dumps({"status": "error", "message": f"Invalid smart collection definition: {str(e)}"}, indent=4)
+
+        # Apply an optional summary after creation
+        if summary:
+            try:
+                collection.editSummary(summary)
+            except Exception:
+                pass
+
+        # Reload so item_count reflects what the filter actually matched, not a
+        # stale value from creation - verify this count looks right for the filter.
+        try:
+            collection.reload()
+        except Exception:
+            pass
+
+        return json.dumps({
+            "status": "success",
+            "message": f"Smart collection '{collection_title}' created successfully",
+            "data": {
+                "title": collection.title,
+                "id": collection.ratingKey,
+                "smart": True,
+                "library": library.title,
+                "item_count": collection.childCount if hasattr(collection, 'childCount') else None
+            }
+        }, indent=4)
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)}, indent=4)
+
+
+@mcp.tool()
+async def collection_edit_smart_filters(collection_title: str = None, collection_id: int = None,
+                                        library_name: str = None, filters: dict = None,
+                                        sort: str = None, limit: int = None, libtype: str = None,
+                                        allow_empty_filter: bool = False) -> str:
+    """Update the filter definition of an existing smart collection.
+
+    Anything you don't pass is left as it is, so a sort-only edit keeps the existing
+    criteria. Plex re-evaluates the collection immediately. Only works on smart
+    collections - use collection_edit for a regular collection's attributes.
+
+    Passing `filters` replaces the whole filter set rather than merging clause by
+    clause, so read the current one first (collection_get_contents with
+    include_items=false) if you mean to add to it. When you don't pass `filters`,
+    the saved criteria are preserved exactly as stored - a filter too complex for
+    the reader to parse is still editable. The response reports the definition
+    before and after the edit.
+
+    Args:
+        collection_title: Title of the smart collection to edit (optional if collection_id is provided)
+        collection_id: ID of the smart collection to edit (optional if collection_title is provided)
+        library_name: Name of the library containing the collection (required if using collection_title)
+        filters: New advanced filters as a dict, e.g. {"genre": "Drama", "year>>": 2010}.
+            See library_get_smart_filter_options for available fields, operators, and values.
+            No suffix on a string field means 'contains': "title=" is the exact match.
+            Omit to keep the current filters.
+        sort: New sort field(s), e.g. "addedAt:desc". Omit to keep the current sort.
+        limit: New maximum number of items. Omit to keep the current limit.
+        libtype: Content type to filter (movie, show, season, episode, artist, album, track, photo).
+            Omit to keep the current one.
+        allow_empty_filter: Permit saving a filter with no criteria, which matches the
+            entire library. Refused by default, since it destroys the existing
+            definition and is rarely intended.
+    """
+    try:
+        plex = connect_to_plex()
+
+        collection, error_response = _resolve_collection(plex, collection_title, collection_id, library_name)
+        if error_response is not None:
+            return error_response
+
+        if not getattr(collection, 'smart', False):
+            return json.dumps({
+                "status": "error",
+                "message": f"Collection '{collection.title}' is not a smart collection; its filters cannot be edited"
+            }, indent=4)
+
+        try:
+            before, after, error = update_smart_filter(
+                collection, filters=filters, sort=sort, limit=limit, libtype=libtype,
+                allow_empty_filter=allow_empty_filter)
+        except BadRequest as e:
+            return json.dumps({"status": "error", "message": f"Invalid smart collection filters: {str(e)}"}, indent=4)
+
+        if error:
+            return json.dumps({"status": "error", "message": error, "current_filter": before}, indent=4)
+
+        collection.reload()
+        return json.dumps({
+            "status": "success",
+            "message": f"Smart collection '{collection.title}' filters updated successfully",
+            "data": {
+                "title": collection.title,
+                "id": collection.ratingKey,
+                "item_count": collection.childCount if hasattr(collection, 'childCount') else None,
+                "filter_before": before,
+                "filter_after": after
+            }
+        }, indent=4)
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)}, indent=4)
+
+
+def get_collection_contents(collection, offset=0, limit=None, include_items=True):
+    """Helper: build a collection's paginated items plus (for smart collections) its filter definition.
+
+    Pagination is done server-side (Plex container params), so only the requested page is fetched.
+    When include_items is False, no items are fetched - only metadata and the smart filter.
+    Mirrors get_playlist_contents so the two readbacks stay consistent.
+    """
+    try:
+        # Capture the filter URI before reloading: a collection's key addresses
+        # its /children representation, which need not carry 'content'.
+        raw_content = getattr(collection, 'content', None)
+
+        # Refresh so totalItems (childCount) is current
+        try:
+            collection.reload()
+        except Exception:
+            pass
+        total = getattr(collection, 'childCount', None)
+
+        is_smart = bool(getattr(collection, 'smart', False))
+
+        collection_info = {
+            "title": collection.title,
+            "id": collection.ratingKey,
+            "key": collection.key,
+            "type": collection.subtype if hasattr(collection, 'subtype') else None,
+            "smart": is_smart,
+            "summary": collection.summary if hasattr(collection, 'summary') else None,
+            "totalItems": total
+        }
+        # Include the smart filter definition so it can be read back before editing
+        if is_smart:
+            collection_info.update(describe_smart_filter(collection, raw_content))
+
+        # Filter-only mode: skip fetching items entirely
+        if not include_items:
+            collection_info["itemsIncluded"] = False
+            return json.dumps(collection_info, indent=4)
+
+        # Fetch just the requested page of items (server-side pagination)
+        page_size = limit if limit is not None else DEFAULT_CONTENTS_PAGE
+        offset = max(0, offset or 0)
+        items = collection.fetchItems(f'{collection.key}/children', container_start=offset, container_size=page_size)
+
+        collection_items = []
+        for i, item in enumerate(items):
+            position = offset + i + 1
+            item_data = {
+                "title": item.title,
+                "type": item.type,
+                "position": position,
+                "ratingKey": item.ratingKey,
+                "addedAt": item.addedAt.strftime("%Y-%m-%d %H:%M:%S") if hasattr(item, 'addedAt') and item.addedAt else None,
+                "thumb": item.thumb if hasattr(item, 'thumb') else None
+            }
+
+            # Add media-type specific fields
+            if item.type == 'movie':
+                item_data["year"] = item.year if hasattr(item, 'year') else None
+            elif item.type == 'show':
+                item_data["year"] = item.year if hasattr(item, 'year') else None
+            elif item.type == 'episode':
+                item_data["show"] = item.grandparentTitle if hasattr(item, 'grandparentTitle') else None
+                item_data["season"] = item.parentTitle if hasattr(item, 'parentTitle') else None
+                item_data["seasonNumber"] = item.parentIndex if hasattr(item, 'parentIndex') else None
+                item_data["episodeNumber"] = item.index if hasattr(item, 'index') else None
+            elif item.type == 'artist':
+                pass
+            elif item.type == 'album':
+                item_data["artist"] = item.parentTitle if hasattr(item, 'parentTitle') else None
+                item_data["year"] = item.year if hasattr(item, 'year') else None
+            elif item.type == 'track':
+                item_data["artist"] = item.grandparentTitle if hasattr(item, 'grandparentTitle') else None
+                item_data["album"] = item.parentTitle if hasattr(item, 'parentTitle') else None
+                item_data["albumArtist"] = item.originalTitle if hasattr(item, 'originalTitle') else None
+
+            collection_items.append(item_data)
+
+        returned = len(collection_items)
+        if total is not None:
+            has_more = offset + returned < total
+        else:
+            has_more = returned == page_size
+
+        collection_info.update({
+            "offset": offset,
+            "limit": page_size,
+            "returnedCount": returned,
+            "hasMore": has_more,
+            "items": collection_items
+        })
+
+        return json.dumps(collection_info, indent=4)
+    except Exception as e:
+        return json.dumps({"error": f"Error formatting collection contents: {str(e)}"}, indent=4)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def collection_get_contents(collection_title: str = None, collection_id: int = None,
+                                  library_name: str = None, limit: int = None, offset: int = 0,
+                                  include_items: bool = True) -> str:
+    """Get the contents of a collection, with pagination, including the filter for a smart collection.
+
+    This is the collection analog of playlist_get_contents: it returns one page of the collection's
+    items and, when the collection is smart, `smartFilter` (the saved search that populates it, in
+    the form the create/edit tools accept) plus `smartFilterRaw` (the same filter as Plex stores it
+    on the wire). Compare the two when verifying what a write actually saved: the wire form spells
+    operators differently, so `title=` in `smartFilter` is `title==` in `smartFilterRaw` and both
+    mean an exact match. If the filter can't be read, `smartFilter` carries an `error` explaining
+    why rather than going missing. The response includes `totalItems`, `offset`, `limit`,
+    `returnedCount`, and `hasMore`; page through by increasing `offset`.
+
+    Args:
+        collection_title: Title of the collection (optional if collection_id is provided)
+        collection_id: ID of the collection (optional if collection_title is provided)
+        library_name: Name of the library containing the collection (required if using collection_title)
+        limit: Maximum number of items to return in this page (defaults to 200)
+        offset: Number of items to skip before this page (for paging; default 0)
+        include_items: When False, skip the item list entirely and return only metadata and, for a
+            smart collection, its `smartFilter`. Use this to read a large collection's filter cheaply.
+    """
+    try:
+        plex = connect_to_plex()
+
+        collection, error_response = _resolve_collection(plex, collection_title, collection_id, library_name)
+        if error_response is not None:
+            return error_response
+
+        return get_collection_contents(collection, offset=offset, limit=limit, include_items=include_items)
+    except Exception as e:
+        return json.dumps({"status": "error", "message": f"Error getting collection contents: {str(e)}"}, indent=4)
