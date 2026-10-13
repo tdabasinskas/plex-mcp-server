@@ -2,6 +2,8 @@
 
 An MCP server for managing Plex libraries, media, and playback from Claude, ChatGPT, and other MCP clients.
 
+This is a fork of [vladimir-tutin/plex-mcp-server](https://github.com/vladimir-tutin/plex-mcp-server), kept rebased on its releases, with extra tools listed under [Additions in this fork](#additions-in-this-fork). It is not published to PyPI: install it from this repository or use the container image below.
+
 ## Features
 
 - **JSON responses**: Structured results for Plex operations.
@@ -16,26 +18,26 @@ An MCP server for managing Plex libraries, media, and playback from Claude, Chat
 
 Run directly without installation:
 ```bash
-uvx plex-mcp-server --transport stdio --plex-url http://your-server:32400 --plex-token your-token
+uvx --from git+https://github.com/tdabasinskas/plex-mcp-server plex-mcp-server --transport stdio --plex-url http://your-server:32400 --plex-token your-token
 ```
 
 ### Option 2: Install via pip
 
 ```bash
-pip install plex-mcp-server
+pip install git+https://github.com/tdabasinskas/plex-mcp-server
 ```
 
 ### Option 3: Development / Source
 
 ```bash
-git clone https://github.com/vladimir-tutin/plex-mcp-server.git
+git clone https://github.com/tdabasinskas/plex-mcp-server.git
 cd plex-mcp-server
 pip install -e .
 ```
 
 ### Option 4: Docker
 
-The published image is `ghcr.io/vladimir-tutin/plex-mcp-server:latest` for Linux
+The published image is `ghcr.io/tdabasinskas/plex-mcp-server:latest` (released versions; `:edge` follows `main`) for Linux
 amd64 and arm64. It runs as a non-root user and serves Streamable HTTP at `/mcp`
 and legacy SSE at `/sse`. No media folders need to be mounted: it uses Plex's API.
 
@@ -45,7 +47,7 @@ Follow the Docker setup below, then see
 #### Docker Compose
 
 ```bash
-git clone https://github.com/vladimir-tutin/plex-mcp-server.git
+git clone https://github.com/tdabasinskas/plex-mcp-server.git
 cd plex-mcp-server
 cp .env.docker.example .env
 ```
@@ -77,7 +79,7 @@ need a reachable HTTPS endpoint; follow [Public HTTPS access](#public-https-acce
 
 #### Other Docker deployments
 
-Use `ghcr.io/vladimir-tutin/plex-mcp-server:latest`, publish container port
+Use `ghcr.io/tdabasinskas/plex-mcp-server:latest`, publish container port
 `3001` (TCP), and set these environment variables:
 
 | Key | Example value |
@@ -157,12 +159,12 @@ variables above and choose the host binding explicitly:
 
 ```bash
 docker run -d --name plex-mcp-server --restart unless-stopped --init \
-  --env-file .env -p 127.0.0.1:3001:3001 ghcr.io/vladimir-tutin/plex-mcp-server:latest
+  --env-file .env -p 127.0.0.1:3001:3001 ghcr.io/tdabasinskas/plex-mcp-server:latest
 ```
 
 This command publishes on loopback only. For standalone SSE, append
 `--transport sse --host 0.0.0.0 --port 3001`. For stdio, use
-`docker run --rm -i --env-file .env ghcr.io/vladimir-tutin/plex-mcp-server:latest --transport stdio`
+`docker run --rm -i --env-file .env ghcr.io/tdabasinskas/plex-mcp-server:latest --transport stdio`
 without publishing a port.
 
 ## Configuration
@@ -196,6 +198,8 @@ Example for Claude Desktop (`%APPDATA%/Claude/claude_desktop_config.json`):
     "plex": {
       "command": "uvx",
       "args": [
+        "--from",
+        "git+https://github.com/tdabasinskas/plex-mcp-server",
         "plex-mcp-server",
         "--transport",
         "stdio",
@@ -663,3 +667,17 @@ If an operation finds multiple items with the same name, it returns a list of sp
 - **Redirect URI mismatch** (provider error page after login): the client's callback isn't in the provider's redirect list — see the table in step 1. Use the exact callback requested by the client. For Codex, replace `<callback-id>` in the example with the actual callback ID; only the loopback port should vary.
 - **Client hangs after login / "Couldn't connect"**: check the server log for `Token valid` vs `Token validation failed`. A failure right after a successful `/token` usually means `MCP_OAUTH_AUDIENCE` doesn't match the token's `aud` — unset it to confirm, then set it to the Client ID.
 - **First request slow**: token validation caches discovery metadata until restart and caches JWKS for `MCP_OAUTH_JWKS_CACHE_TTL` seconds (default 3600). After rotating signing keys in the provider, restart the server or wait for the cache to expire.
+
+## Additions in this fork
+
+This fork tracks upstream releases and carries a few extras on top:
+
+- **Smart collections**: `collection_create_smart`, `collection_edit_smart_filters`, and paginated `collection_get_contents`.
+- **Safer smart filter edits**: `playlist_edit_smart_filters` (and the collection equivalent) keep the saved filter clauses byte for byte when only sort, limit or type change, including filters plexapi cannot parse; they keep the libtype, refuse to save an empty filter unless `allow_empty_filter` is set, and verify what Plex stored. `playlist_get_contents` returns the saved definition as `smartFilter` / `smartFilterRaw` and pages large playlists.
+- **Smart filter vocabulary**: `library_get_smart_filter_options` lists fields for every type in a library with operators in the form plexapi expects (`title=` is an exact match, bare `title` is contains).
+- **Matching**: `media_get_match`, `media_fix_match`, `media_unmatch`.
+- **Metadata**: `media_edit_metadata` edits every tag type; media tools accept `media_id` and return the candidates when a title is ambiguous.
+- **Playlists**: `playlist_move_item` reorders a regular playlist.
+- **TV episodes** (from [#11](https://github.com/tdabasinskas/plex-mcp-server/pull/11) by @jbienzss): `media_get_episodes` lists a show's episodes with watched/aired/season filters, air-date or series order and paging; `media_get_next_unwatched_episode` returns where to resume, i.e. the first aired, unwatched episode after the furthest one watched (specials ignored by default).
+- **Transport**: `MCP_STATELESS_HTTP=true` serves Streamable HTTP without sessions, for a gateway or load balancer in front.
+- **Read-only hints**: every get/list/search tool carries `readOnlyHint`, so clients can run them without a confirmation.

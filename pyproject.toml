@@ -39,9 +39,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/vladimir-tutin/plex-mcp-server"
-Repository = "https://github.com/vladimir-tutin/plex-mcp-server"
-Issues = "https://github.com/vladimir-tutin/plex-mcp-server/issues"
+Homepage = "https://github.com/tdabasinskas/plex-mcp-server"
+Repository = "https://github.com/tdabasinskas/plex-mcp-server"
+Issues = "https://github.com/tdabasinskas/plex-mcp-server/issues"
+Upstream = "https://github.com/vladimir-tutin/plex-mcp-server"
 
 [project.scripts]
 plex-mcp-server = "plex_mcp_server:main"
