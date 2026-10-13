@@ -28,7 +28,7 @@ def _episode_air_date(episode) -> Optional[date]:
 
 
 def _is_watched(episode) -> bool:
-    """Plex treats a positive view count as watched for the token's user."""
+    """Plex treats a positive view count as watched for the selected user."""
     view_count = getattr(episode, "viewCount", None)
     try:
         return view_count is not None and int(view_count) > 0
@@ -36,8 +36,17 @@ def _is_watched(episode) -> bool:
         return False
 
 
-def _normalize_episode(episode) -> dict:
-    air_date = _episode_air_date(episode)
+def _episode_number(value) -> int:
+    return value if isinstance(value, int) else -1
+
+
+def _position(episode) -> tuple:
+    """(season, episode) for ordering; unknown numbers sort first."""
+    return (_episode_number(getattr(episode, "parentIndex", None)),
+            _episode_number(getattr(episode, "index", None)))
+
+
+def _normalize_episode(episode, air_date: Optional[date]) -> dict:
     view_count = getattr(episode, "viewCount", None)
     return {
         "id": getattr(episode, "ratingKey", None),
@@ -53,10 +62,6 @@ def _normalize_episode(episode) -> dict:
     }
 
 
-def _episode_number(value) -> int:
-    return value if isinstance(value, int) else -1
-
-
 def _filter_and_sort_episodes(
     episodes,
     watched: Optional[bool] = None,
@@ -65,9 +70,14 @@ def _filter_and_sort_episodes(
     sort: str = "air_date",
     sort_order: str = "asc",
 ) -> list:
-    """Apply the public episode filters and deterministic ordering."""
+    """Apply the public episode filters and a deterministic order.
+
+    Returns (episode, air_date) pairs so the date is parsed once. Air-date order
+    keeps same-day episodes in season/episode order and puts undated ones last,
+    in either direction.
+    """
     today = date.today()
-    filtered_episodes = []
+    rows = []
     for episode in episodes:
         air_date = _episode_air_date(episode)
         if watched is not None and _is_watched(episode) != watched:
@@ -76,58 +86,44 @@ def _filter_and_sort_episodes(
             continue
         if season is not None and getattr(episode, "parentIndex", None) != season:
             continue
-        filtered_episodes.append(episode)
+        rows.append((episode, air_date))
 
     reverse = sort_order == "desc"
     if sort == "season_episode":
-        return sorted(
-            filtered_episodes,
-            key=lambda episode: (
-                _episode_number(getattr(episode, "parentIndex", None)),
-                _episode_number(getattr(episode, "index", None)),
-            ),
-            reverse=reverse,
-        )
+        return sorted(rows, key=lambda row: _position(row[0]), reverse=reverse)
 
-    dated_episodes = [episode for episode in filtered_episodes if _episode_air_date(episode)]
-    undated_episodes = [episode for episode in filtered_episodes if not _episode_air_date(episode)]
-    if reverse:
-        dated_episodes.sort(
-            key=lambda episode: (
-                _episode_number(getattr(episode, "parentIndex", None)),
-                _episode_number(getattr(episode, "index", None)),
-            )
-        )
-        dated_episodes.sort(key=_episode_air_date, reverse=True)
-    else:
-        dated_episodes.sort(
-            key=lambda episode: (
-                _episode_air_date(episode),
-                _episode_number(getattr(episode, "parentIndex", None)),
-                _episode_number(getattr(episode, "index", None)),
-            )
-        )
-    undated_episodes.sort(
-        key=lambda episode: (
-            _episode_number(getattr(episode, "parentIndex", None)),
-            _episode_number(getattr(episode, "index", None)),
-        ),
-        reverse=reverse,
-    )
-    return dated_episodes + undated_episodes
-
-
-def _get_show_episodes(plex, media_id: int):
-    """Fetch a show and its episodes with Plex's single all-leaves request."""
-    show = plex.fetchItem(media_id)
-    if getattr(show, "type", None) != "show":
-        raise ValueError(f"Media ID {media_id} is not a TV show.")
-    # PlexAPI Show.episodes() maps to /library/metadata/{ratingKey}/allLeaves.
-    return show, show.episodes()
+    dated = sorted((r for r in rows if r[1]), key=lambda row: _position(row[0]), reverse=reverse)
+    dated.sort(key=lambda row: row[1], reverse=reverse)  # stable: ties keep position order
+    undated = sorted((r for r in rows if not r[1]), key=lambda row: _position(row[0]), reverse=reverse)
+    return dated + undated
 
 
 def _episode_error(message: str) -> str:
     return json.dumps({"status": "error", "message": message}, indent=2)
+
+
+def _load_show(media_id: int, username: Optional[str]):
+    """(show, episodes, None) or (None, None, error JSON) for a TV show rating key.
+
+    PlexAPI's Show.episodes() is one /allLeaves request for the whole show.
+    """
+    try:
+        plex = server_for_user(connect_to_plex(), username=username)
+    except Exception as error:
+        return None, None, _episode_error(f"Could not connect to Plex: {error}")
+    try:
+        show = plex.fetchItem(media_id)
+        if getattr(show, "type", None) != "show":
+            return None, None, _episode_error(f"Media ID {media_id} is not a TV show.")
+        return show, show.episodes(), None
+    except NotFound:
+        return None, None, _episode_error(f"Could not find media with ID {media_id}.")
+    except Exception as error:
+        return None, None, _episode_error(f"Could not retrieve episodes for media ID {media_id}: {error}")
+
+
+def _show_ref(show, media_id):
+    return {"id": getattr(show, "ratingKey", media_id), "title": getattr(show, "title", None)}
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
@@ -137,12 +133,26 @@ async def media_get_episodes(
     aired_only: bool = False,
     season: Optional[int] = None,
     limit: Optional[int] = None,
+    offset: int = 0,
     sort: str = "air_date",
     sort_order: str = "asc",
+    username: Optional[str] = None,
 ) -> str:
-    """Retrieve compact episode data for a TV show rating key.
+    """Retrieve compact episode data for a TV show rating key, one page at a time.
 
-    Watch state belongs to the Plex user represented by the configured PLEX_TOKEN.
+    Args:
+        media_id: Rating key of the show (from media_search or library_get_contents).
+        watched: True for watched episodes only, False for unwatched only; omit for all.
+        aired_only: Leave out episodes without an air date or airing in the future.
+        season: Only this season number (0 is specials).
+        limit: Page size; omit for every remaining episode.
+        offset: Episodes to skip before this page.
+        sort: air_date (default) or season_episode.
+        sort_order: asc (default) or desc.
+        username: Optional Plex username or profile title; watch state is that user's.
+
+    The response carries `total`, `offset`, `count` and `hasMore`, like
+    playlist_get_contents and collection_get_contents.
     """
     if sort not in {"air_date", "season_episode"}:
         return _episode_error("Invalid sort value. Use 'air_date' or 'season_episode'.")
@@ -150,28 +160,18 @@ async def media_get_episodes(
         return _episode_error("Invalid sort_order value. Use 'asc' or 'desc'.")
     if limit is not None and limit <= 0:
         return _episode_error("limit must be a positive integer.")
+    if offset < 0:
+        return _episode_error("offset must not be negative.")
 
-    try:
-        plex = connect_to_plex()
-    except Exception as error:
-        return _episode_error(f"Could not connect to Plex: {error}")
+    show, episodes, error = await asyncio.to_thread(_load_show, media_id, username)
+    if error:
+        return error
 
-    try:
-        show, episodes = _get_show_episodes(plex, media_id)
-    except NotFound:
-        return _episode_error(f"Could not find media with ID {media_id}.")
-    except ValueError as error:
-        return _episode_error(str(error))
-    except Exception as error:
-        return _episode_error(f"Could not retrieve episodes for media ID {media_id}: {error}")
-
-    episodes = _filter_and_sort_episodes(episodes, watched, aired_only, season, sort, sort_order)
-    if limit is not None:
-        episodes = episodes[:limit]
-
+    rows = _filter_and_sort_episodes(episodes, watched, aired_only, season, sort, sort_order)
+    page = rows[offset:] if limit is None else rows[offset:offset + limit]
     return json.dumps({
         "status": "success",
-        "show": {"id": getattr(show, "ratingKey", media_id), "title": getattr(show, "title", None)},
+        "show": _show_ref(show, media_id),
         "filters": {
             "watched": watched,
             "aired_only": aired_only,
@@ -180,41 +180,53 @@ async def media_get_episodes(
             "sort_order": sort_order,
             "limit": limit,
         },
-        "count": len(episodes),
-        "episodes": [_normalize_episode(episode) for episode in episodes],
+        "total": len(rows),
+        "offset": offset,
+        "count": len(page),
+        "hasMore": offset + len(page) < len(rows),
+        "episodes": [_normalize_episode(episode, air_date) for episode, air_date in page],
     }, indent=2)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-async def media_get_next_unwatched_episode(media_id: int) -> str:
-    """Return the earliest aired episode not watched by the token's Plex user."""
-    try:
-        plex = connect_to_plex()
-    except Exception as error:
-        return _episode_error(f"Could not connect to Plex: {error}")
+async def media_get_next_unwatched_episode(
+    media_id: int, ignore_specials: bool = True, username: Optional[str] = None
+) -> str:
+    """Return the episode to watch next: where the user left off, not the oldest gap.
 
-    try:
-        show, episodes = _get_show_episodes(plex, media_id)
-    except NotFound:
-        return _episode_error(f"Could not find media with ID {media_id}.")
-    except ValueError as error:
-        return _episode_error(str(error))
-    except Exception as error:
-        return _episode_error(f"Could not retrieve episodes for media ID {media_id}: {error}")
+    Finds the furthest (season, episode) the user has watched and returns the first
+    aired, unwatched episode after it in series order. A skipped episode or special
+    earlier in the run is not returned. Nothing watched yet gives the premiere
+    (S01E01); a caught-up show gives `episode: null`.
 
-    episodes = _filter_and_sort_episodes(
-        episodes, watched=False, aired_only=True, sort="air_date", sort_order="asc"
-    )
+    Args:
+        media_id: Rating key of the show.
+        ignore_specials: Leave Season 0 out of both the furthest point and the result (default).
+        username: Optional Plex username or profile title; watch state is that user's.
+    """
+    show, episodes, error = await asyncio.to_thread(_load_show, media_id, username)
+    if error:
+        return error
+
+    if ignore_specials:
+        episodes = [e for e in episodes if getattr(e, "parentIndex", None) != 0]
+    watched_positions = [_position(e) for e in episodes if _is_watched(e)]
+    furthest = max(watched_positions) if watched_positions else None
+
+    candidates = _filter_and_sort_episodes(
+        episodes, watched=False, aired_only=True, sort="season_episode", sort_order="asc")
+    if furthest is not None:
+        candidates = [row for row in candidates if _position(row[0]) > furthest]
+
     response = {
         "status": "success",
-        "show": {"id": getattr(show, "ratingKey", media_id), "title": getattr(show, "title", None)},
-        "episode": _normalize_episode(episodes[0]) if episodes else None,
+        "show": _show_ref(show, media_id),
+        "episode": _normalize_episode(*candidates[0]) if candidates else None,
     }
-    if not episodes:
-        response["message"] = "No aired unwatched episodes found."
+    if not candidates:
+        response["message"] = "No aired unwatched episodes after the furthest watched one."
     return json.dumps(response, indent=2)
 
-@mcp.tool()
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def media_search(query: str, content_type: str = None) -> str:
     """Search for media across all libraries.
