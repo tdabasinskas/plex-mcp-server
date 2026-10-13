@@ -89,6 +89,7 @@ from modules.playlist import (
     playlist_edit,
     playlist_upload_poster,
     playlist_copy_to_user,
+    playlist_move_item,
     playlist_get_smart_filter_options,
     playlist_create_smart,
     playlist_edit_smart_filters

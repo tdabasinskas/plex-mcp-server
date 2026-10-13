@@ -12,6 +12,11 @@ import requests
 import base64
 import json
 
+# Default page size when listing playlist/collection contents without an explicit limit,
+# so large (potentially hundreds of thousands of items) playlists don't overflow a response.
+DEFAULT_CONTENTS_PAGE = 200
+
+
 def _playlist_by_id(plex, playlist_id):
     # Resolve only among the selected user's playlists, never arbitrary media IDs.
     return next((item for item in plex.playlists()
@@ -734,24 +739,39 @@ async def playlist_delete(playlist_title: str = None, playlist_id: int = None, u
         return json.dumps({"error": str(e)}, indent=4)
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-async def playlist_get_contents(playlist_title: str = None, playlist_id: int = None, username: str = None) -> str:
-    """Get the contents of a playlist.
-    
+async def playlist_get_contents(playlist_title: str = None, playlist_id: int = None,
+                                limit: int = None, offset: int = 0, include_items: bool = True,
+                                username: str = None) -> str:
+    """Get the contents of a playlist, with pagination.
+
+    Results are paginated so large playlists don't overflow the response. The response includes
+    `totalItems`, `offset`, `limit`, `returnedCount`, and `hasMore`; page through by increasing
+    `offset`. For a smart playlist the response also includes `smartFilter` (the saved search that
+    populates it, in the form the create/edit tools accept) and `smartFilterRaw` (the same filter
+    as Plex stores it on the wire). Compare the two when verifying what a write actually saved:
+    the wire form spells operators differently, so `title=` in `smartFilter` is `title==` in
+    `smartFilterRaw` and both mean an exact match. If the filter can't be read, `smartFilter`
+    carries an `error` explaining why rather than going missing.
+
     Args:
         username: Optional Plex username or profile title. Omit for the configured account. Failed access returns an error.
         playlist_title: Title of the playlist to get contents of (optional if playlist_id is provided)
         playlist_id: ID of the playlist to get contents of (optional if playlist_title is provided)
-        
+        limit: Maximum number of items to return in this page (defaults to 200)
+        offset: Number of items to skip before this page (for paging; default 0)
+        include_items: When False, skip the item list entirely and return only metadata and, for a
+            smart playlist, its `smartFilter`. Use this to read a huge smart playlist's filter cheaply.
+
     Returns:
-        JSON object containing the playlist contents
+        JSON object containing the playlist metadata and (unless include_items is False) one page of items
     """
     try:
         plex = server_for_user(connect_to_plex(), username=username)
-        
+
         # Validate that at least one identifier is provided
         if not playlist_id and not playlist_title:
             return json.dumps({"error": "Either playlist_id or playlist_title must be provided"}, indent=4)
-        
+
         # If playlist_id is provided, use it to directly fetch the playlist
         if playlist_id:
             try:
@@ -759,32 +779,30 @@ async def playlist_get_contents(playlist_title: str = None, playlist_id: int = N
                 # Try fetching by ratingKey first
                 try:
                     playlist = _playlist_by_id(plex, playlist_id)
-
                 except:
                     # If that fails, try finding by key in all playlists
                     all_playlists = plex.playlists()
-                    playlist = next((p for p in all_playlists if str(p.ratingKey) == str(playlist_id)), None)
-                
+                    playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
+
                 if playlist is None:
                     return json.dumps({"error": f"Playlist with ID '{playlist_id}' not found"}, indent=4)
-                
-                # Get playlist contents
 
-                return get_playlist_contents(playlist)
+                # Get playlist contents
+                return get_playlist_contents(playlist, offset=offset, limit=limit, include_items=include_items)
             except Exception as e:
                 if "500" in str(e):
                     return json.dumps({"error": "Empty playlist"}, indent=4)
                 else:
                     return json.dumps({"error": f"Error fetching playlist by ID: {str(e)}"}, indent=4)
-        
+
         # If we get here, we're searching by title
         all_playlists = plex.playlists()
         matching_playlists = [p for p in all_playlists if p.title.lower() == playlist_title.lower()]
-        
+
         # If no matching playlists
         if not matching_playlists:
             return json.dumps({"error": f"No playlist found with title '{playlist_title}'"}, indent=4)
-        
+
         # If multiple matching playlists, return list of matches with IDs
         if len(matching_playlists) > 1:
             matches = []
@@ -795,33 +813,74 @@ async def playlist_get_contents(playlist_title: str = None, playlist_id: int = N
                     "type": p.playlistType,
                     "item_count": p.leafCount if hasattr(p, 'leafCount') else len(p.items())
                 })
-            
+
             # Return as a direct array like playlist_list
             return json.dumps(matches, indent=4)
-        
+
         # Single match - get contents
-        return get_playlist_contents(matching_playlists[0])
-    
+        return get_playlist_contents(matching_playlists[0], offset=offset, limit=limit, include_items=include_items)
+
     except Exception as e:
         return json.dumps({"status": "error", "message": f"Error getting playlist contents: {str(e)}"}, indent=4)
 
-def get_playlist_contents(playlist):
-    """Helper function to get formatted playlist contents."""
+def get_playlist_contents(playlist, offset=0, limit=None, include_items=True):
+    """Helper function to get formatted, paginated playlist contents.
 
+    Pagination is done server-side (Plex container params), so only the requested page is fetched.
+    When include_items is False, no items are fetched at all - only metadata and the smart filter.
+    """
     try:
-        items = playlist.items()
+        # Capture the filter URI before reloading: a playlist's key addresses its
+        # /items representation, which need not carry 'content'.
+        raw_content = getattr(playlist, 'content', None)
+
+        # Refresh so totalItems (leafCount) is current
+        try:
+            playlist.reload()
+        except Exception:
+            pass
+        total = getattr(playlist, 'leafCount', None)
+
+        is_smart = bool(getattr(playlist, 'smart', False))
+
+        playlist_info = {
+            "title": playlist.title,
+            "id": playlist.ratingKey,
+            "key": playlist.key,
+            "type": playlist.playlistType,
+            "smart": is_smart,
+            "summary": playlist.summary if hasattr(playlist, 'summary') else None,
+            "duration": playlist.duration if hasattr(playlist, 'duration') else None,
+            "totalItems": total
+        }
+        # Include the smart filter definition so it can be read back before editing
+        if is_smart:
+            playlist_info.update(describe_smart_filter(playlist, raw_content))
+
+        # Filter-only mode: skip fetching items entirely
+        if not include_items:
+            playlist_info["itemsIncluded"] = False
+            return json.dumps(playlist_info, indent=4)
+
+        # Fetch just the requested page of items (server-side pagination)
+        page_size = limit if limit is not None else DEFAULT_CONTENTS_PAGE
+        offset = max(0, offset or 0)
+        items = playlist.fetchItems(f'{playlist.key}/items', container_start=offset, container_size=page_size)
+
         playlist_items = []
-        
-        for item in items:
+        for i, item in enumerate(items):
+            position = offset + i + 1
             item_data = {
                 "title": item.title,
                 "type": item.type,
+                "position": position,
+                "playlistItemID": item.playlistItemID if hasattr(item, 'playlistItemID') else None,
                 "ratingKey": item.ratingKey,
-                "addedAt": item.addedAt.strftime("%Y-%m-%d %H:%M:%S") if hasattr(item, 'addedAt') else None,
+                "addedAt": item.addedAt.strftime("%Y-%m-%d %H:%M:%S") if hasattr(item, 'addedAt') and item.addedAt else None,
                 "duration": item.duration if hasattr(item, 'duration') else None,
                 "thumb": item.thumb if hasattr(item, 'thumb') else None
             }
-            
+
             # Add media-type specific fields
             if item.type == 'movie':
                 item_data["year"] = item.year if hasattr(item, 'year') else None
@@ -834,28 +893,129 @@ def get_playlist_contents(playlist):
                 item_data["artist"] = item.grandparentTitle if hasattr(item, 'grandparentTitle') else None
                 item_data["album"] = item.parentTitle if hasattr(item, 'parentTitle') else None
                 item_data["albumArtist"] = item.originalTitle if hasattr(item, 'originalTitle') else None
-            
-            playlist_items.append(item_data)
-        
-        playlist_info = {
-            "title": playlist.title,
-            "id": playlist.ratingKey,
-            "key": playlist.key,
-            "type": playlist.playlistType,
-            "summary": playlist.summary if hasattr(playlist, 'summary') else None,
-            "duration": playlist.duration if hasattr(playlist, 'duration') else None,
-            "itemCount": len(playlist_items),
-            "items": playlist_items
-        }
-        
-        if getattr(playlist, "smart", False):
-            playlist_info["smart"] = True
-            playlist_info["definition"] = playlist.filters()
 
+            playlist_items.append(item_data)
+
+        returned = len(playlist_items)
+        if total is not None:
+            has_more = offset + returned < total
+        else:
+            has_more = returned == page_size
+
+        playlist_info.update({
+            "offset": offset,
+            "limit": page_size,
+            "returnedCount": returned,
+            "hasMore": has_more,
+            "items": playlist_items
+        })
+        
         # Return just the playlist info without status wrappers
         return json.dumps(playlist_info, indent=4)
     except Exception as e:
         return json.dumps({"error": f"Error formatting playlist contents: {str(e)}"}, indent=4)
+
+
+@mcp.tool()
+async def playlist_move_item(playlist_title: str = None, playlist_id: int = None,
+                             item_playlist_item_id: int = None, new_position: int = None,
+                             username: str = None) -> str:
+    """Move a single item to a new position within a regular playlist.
+
+    Reordering is keyed off playlistItemID (unique per row, so it handles a
+    playlist that contains the same item more than once). Call
+    playlist_get_contents first to read each row's playlistItemID and current
+    1-based position, then pass the row's playlistItemID and the target
+    new_position here.
+
+    Note: smart playlists cannot be reordered manually; their order is driven
+    by the saved filter/sort.
+
+    Args:
+        playlist_title: Title of the playlist (optional if playlist_id is provided)
+        playlist_id: ID of the playlist (optional if playlist_title is provided)
+        item_playlist_item_id: playlistItemID of the row to move (from playlist_get_contents)
+        new_position: Target 1-based position for the item
+        username: Optional Plex username or profile title. Omit for the configured account. Failed access returns an error.
+
+    Returns:
+        JSON object with the reordered playlist contents, or an error
+    """
+    try:
+        plex = server_for_user(connect_to_plex(), username=username)
+
+        playlist, error_response = _resolve_playlist(plex, playlist_title, playlist_id)
+        if error_response is not None:
+            return error_response
+
+        if getattr(playlist, 'smart', False):
+            return json.dumps({"error": "Smart playlists cannot be reordered manually; their order is driven by the saved filter."}, indent=4)
+
+        if item_playlist_item_id is None:
+            return json.dumps({"error": "item_playlist_item_id must be provided (see playlist_get_contents)"}, indent=4)
+        if new_position is None:
+            return json.dumps({"error": "new_position must be provided (1-based)"}, indent=4)
+
+        items = playlist.items()
+        target = next((i for i in items if getattr(i, 'playlistItemID', None) == item_playlist_item_id), None)
+        if target is None:
+            return json.dumps({"error": f"No item with playlistItemID '{item_playlist_item_id}' found in this playlist"}, indent=4)
+
+        if new_position < 1 or new_position > len(items):
+            return json.dumps({"error": f"new_position must be between 1 and {len(items)}"}, indent=4)
+
+        # Build the list without the moved row so the target slot maps to an
+        # "after" anchor. moveItem places target immediately after `after`
+        # (after=None moves it to the top).
+        others = [i for i in items if getattr(i, 'playlistItemID', None) != item_playlist_item_id]
+        idx = new_position - 1
+        after = None if idx <= 0 else others[idx - 1]
+
+        playlist.moveItem(target, after=after)
+        playlist.reload()
+
+        return get_playlist_contents(playlist)
+    except Exception as e:
+        return json.dumps({"status": "error", "message": f"Error moving playlist item: {str(e)}"}, indent=4)
+
+
+def _resolve_playlist(plex, playlist_title: str = None, playlist_id: int = None):
+    """Resolve a playlist by id or title.
+
+    Returns a tuple (playlist, error_response). On success, playlist is the
+    matched Playlist and error_response is None. On failure or ambiguity,
+    playlist is None and error_response is a JSON string ready to return.
+    """
+    if not playlist_id and not playlist_title:
+        return None, json.dumps({"error": "Either playlist_id or playlist_title must be provided"}, indent=4)
+
+    # Fetch directly by id when provided
+    if playlist_id:
+        try:
+            try:
+                playlist = _playlist_by_id(plex, playlist_id)
+            except Exception:
+                # Fall back to matching by ratingKey across all playlists
+                playlist = next((p for p in plex.playlists() if p.ratingKey == playlist_id), None)
+            if playlist is None:
+                return None, json.dumps({"error": f"Playlist with ID '{playlist_id}' not found"}, indent=4)
+            return playlist, None
+        except Exception as e:
+            return None, json.dumps({"error": f"Error fetching playlist by ID: {str(e)}"}, indent=4)
+
+    # Otherwise match by title
+    matching = [p for p in plex.playlists() if p.title.lower() == playlist_title.lower()]
+    if not matching:
+        return None, json.dumps({"error": f"No playlist found with title '{playlist_title}'"}, indent=4)
+    if len(matching) > 1:
+        # Ambiguous title: return the candidates so the caller can pick an id
+        matches = [{
+            "title": p.title,
+            "id": p.ratingKey,
+            "type": p.playlistType
+        } for p in matching]
+        return None, json.dumps(matches, indent=4)
+    return matching[0], None
 
 
 def _smart_playlist(plex, playlist_title, playlist_id):
