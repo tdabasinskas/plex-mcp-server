@@ -908,3 +908,133 @@ async def library_get_contents(
             
     except Exception as e:
         return json.dumps({"error": f"Error getting library contents: {str(e)}"})
+
+
+def _operator_suffix(operator):
+    """Translate a Plex server operator key into the suffix plexapi expects.
+
+    Plex's URL form and plexapi's filter-dict form differ by one trailing '=':
+    the server calls "is" ``==`` while plexapi wants ``title=``, and the server
+    calls "contains" ``=`` while plexapi wants a bare ``title`` with no suffix.
+    Handing out the raw server key makes a caller asking for "contains" get an
+    exact match instead, silently. Strip the trailing '=' and report the
+    server's own title so the caller can append what it is given verbatim.
+    """
+    key = operator.key or ''
+    return {
+        "suffix": key[:-1] if key.endswith('=') else key,
+        "means": operator.title
+    }
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def library_get_smart_filter_options(library_name: str, field: str = None, libtype: str = None) -> str:
+    """Discover the filter and sort options for building a smart playlist or smart collection in a library.
+
+    Smart playlists and smart collections are both saved searches over a single library that Plex
+    keeps auto-populated. They share the same per-library filter vocabulary, so use this tool to
+    learn what you can filter and sort on before calling playlist_create_smart / collection_create_smart
+    (or their edit_smart_filters counterparts).
+
+    A library can hold several content types (a Music library has artist, album, and track), and each
+    exposes its own filter fields and sort fields. This tool reports every one. Fields are listed with
+    their fully-qualified key (e.g. 'artist.title', 'track.userRating') so you can filter across types
+    using the 'libtype.field' syntax; for the library's default type the prefix can be omitted.
+
+    Note: Plex's simple filter dropdown declares far fewer fields than the API actually accepts. This
+    tool reports the broader 'listFields' set (what filters are really validated against), so fields
+    like title or userRating appear here even though they are absent from the basic dropdown. Because
+    of this, always verify a smart playlist/collection populated as expected after creating it (check
+    the returned item count) rather than assuming an accepted filter matched anything.
+
+    Args:
+        library_name: Name of the library section to inspect (e.g. 'Movies', 'TV Shows', 'Music')
+        field: Optional filter field (e.g. 'genre', 'contentRating'). When provided, returns the
+            valid values (choices) for that field instead of the overall schema. Useful for tag
+            fields where you need the exact value to filter on.
+        libtype: Optional content type (movie, show, season, episode, artist, album, track, ...).
+            In schema mode, limits the output to that one type; in field mode, scopes the choices
+            lookup to that type. Omit to cover every type in the library.
+    """
+    try:
+        plex = connect_to_plex()
+        try:
+            section = plex.library.section(library_name)
+        except NotFound:
+            return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+
+        # Field-choices mode: list the valid values for a single field
+        if field:
+            try:
+                choices = section.listFilterChoices(field, libtype=libtype)
+            except Exception as e:
+                return json.dumps({"error": f"Could not get choices for field '{field}': {str(e)}"}, indent=4)
+            values = [{"title": c.title, "value": c.key} for c in choices]
+            return json.dumps({
+                "library": section.title,
+                "field": field,
+                "libtype": libtype,
+                "count": len(values),
+                "choices": values
+            }, indent=4)
+
+        # Schema mode: report the filter fields and sort fields for every content type
+        # in the library (or just the requested one). We use listFields()/filterTypes()
+        # rather than the sparse listFilters() dropdown, since that is the full set the
+        # API actually validates filters against.
+        filter_types = section.filterTypes()
+        if libtype:
+            filter_types = [ft for ft in filter_types if ft.type == libtype]
+            if not filter_types:
+                available = [ft.type for ft in section.filterTypes()]
+                return json.dumps({"error": f"Unknown libtype '{libtype}' for library '{section.title}'. Available: {available}"}, indent=4)
+
+        libtypes_out = []
+        for ft in filter_types:
+            fields_out = []
+            for f in ft.fields:
+                try:
+                    operators = [_operator_suffix(o) for o in section.listOperators(f.type)]
+                except Exception:
+                    operators = []
+                fields_out.append({
+                    "field": f.key,
+                    "title": f.title,
+                    "type": f.type,
+                    "operators": operators
+                })
+
+            sorts_out = []
+            for s in ft.sorts:
+                sorts_out.append({
+                    "field": s.key,
+                    "title": s.title,
+                    "defaultDirection": s.defaultDirection
+                })
+
+            libtypes_out.append({
+                "libtype": ft.type,
+                "fields": fields_out,
+                "sorts": sorts_out
+            })
+
+        return json.dumps({
+            "library": section.title,
+            "default_libtype": section.METADATA_TYPE,
+            "libtypes": libtypes_out,
+            "usage": (
+                "Pass filters to playlist_create_smart / collection_create_smart as a dict, e.g. "
+                '{"genre": "Comedy", "year>>": 2000, "unwatched": true}. '
+                "Append an operator's 'suffix' from a field's 'operators' list to the field name, "
+                "verbatim (e.g. 'year>>' means after that year). An empty suffix is a real operator, "
+                "not the absence of one: on a string field it means 'contains', so 'title' matches "
+                "substrings while 'title=' is an exact match. To filter on a type other than "
+                "the library default, use the fully-qualified key (e.g. 'artist.title', "
+                "'track.userRating>>'). Call this tool again with a 'field' argument to list the "
+                "valid values for a tag field. Sort options are limited to what Plex exposes per "
+                "type (there is no 'year' sort, for instance) - if a field you want is missing from "
+                "'sorts', sort by 'titleSort' or accept the default order."
+            )
+        }, indent=4)
+    except Exception as e:
+        return json.dumps({"error": str(e)}, indent=4)

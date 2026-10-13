@@ -6,6 +6,7 @@ from plexapi import utils
 from plexapi.playlist import Playlist # type: ignore
 from plexapi.exceptions import NotFound, BadRequest  # type: ignore
 from mcp.types import ToolAnnotations  # type: ignore
+from modules.smart_filter import describe_smart_filter, update_smart_filter
 import os
 import requests
 import base64
@@ -872,11 +873,16 @@ def _smart_playlist(plex, playlist_title, playlist_id):
 
 
 def _smart_result(playlist):
+    raw_content = getattr(playlist, "content", None)
     playlist.reload()
     items = playlist.fetchItems(playlist.key + "/items", maxresults=20, container_size=20)
     return {
         "status": "success", "title": playlist.title, "playlist_id": playlist.ratingKey,
-        "smart": True, "definition": playlist.filters(), "item_count": playlist.leafCount,
+        "smart": True,
+        # plexapi's filters() raises on filters Plex itself writes (grouped and
+        # some encoded ones); describe_smart_filter reads them tolerantly.
+        "definition": describe_smart_filter(playlist, raw_content).get("smartFilter"),
+        "item_count": playlist.leafCount,
         "items": [{"title": i.title, "media_id": i.ratingKey, "type": i.type,
                    "show": getattr(i, "grandparentTitle", None)} for i in items],
         "preview_limit": 20,
@@ -967,19 +973,27 @@ async def playlist_create_smart(playlist_title: str, library_name: str, filters:
 async def playlist_edit_smart_filters(playlist_title: Optional[str] = None, playlist_id: Optional[int] = None,
                                       filters: Optional[dict] = None, sort: Optional[str] = None,
                                       limit: Optional[int] = None, libtype: Optional[str] = None,
-                                      username: Optional[str] = None) -> str:
+                                      username: Optional[str] = None,
+                                      allow_empty_filter: bool = False) -> str:
     """Edit a smart playlist while preserving settings you omit, including its search type.
+
+    When `filters` is omitted, the saved filter clauses are kept byte for byte - even
+    ones plexapi cannot parse - and only sort/limit/libtype change. Passing `filters`
+    replaces the whole set; read the current one first (playlist_get_contents with
+    include_items=false) to add to it. Every write is checked against what Plex stored.
 
     Args:
         playlist_title: Existing title, optional when playlist_id is supplied.
         playlist_id: ID from playlist_list or playlist_create_smart.
-        filters: Replace filters; omit to preserve, or use {} to clear them.
-        sort: Replace sort order; omit to preserve, or use an empty string to clear it.
-        limit: Replace result limit; omit to preserve, or use 0 to remove it.
+        filters: Replace filters; omit to preserve. An empty set matches the whole library
+            and needs allow_empty_filter=true.
+        sort: Replace sort order, e.g. year:desc; omit to preserve.
+        limit: Replace result limit; omit to preserve.
         libtype: Change search type explicitly; omit to preserve show/episode/artist/track matching.
         username: Optional Plex username or profile title; omit for the configured account.
+        allow_empty_filter: Permit saving no criteria at all (the whole library).
 
-    Returns the saved definition and up to 20 current items. playlist_get_contents also returns the definition.
+    Returns the saved definition, the definition before the edit, and up to 20 current items.
     """
     def run():
         if limit is not None and limit < 0:
@@ -988,21 +1002,12 @@ async def playlist_edit_smart_filters(playlist_title: Optional[str] = None, play
         playlist = _smart_playlist(plex, playlist_title, playlist_id)
         if not playlist.smart:
             raise ValueError("This playlist is not smart")
-        definition = playlist.filters()
-        section = playlist.section()
-        selected_type = libtype or definition.get("libtype")
-        if not selected_type:
-            raise ValueError("Cannot determine the saved search type; supply libtype explicitly")
-        # PlexAPI.updateFilters always uses section.METADATA_TYPE, losing show/artist semantics.
-        search_key = section._buildSearchKey(
-            libtype=selected_type,
-            filters=definition.get("filters") if filters is None else filters,
-            sort=definition.get("sort") if sort is None else (sort or None),
-            limit=definition.get("limit") if limit is None else (limit or None),
-        )
-        uri = plex._uriRoot() + search_key
-        plex.query(playlist.key + "/items" + utils.joinArgs({"uri": uri}), method=plex._session.put)
-        return _smart_result(playlist)
+        before, _after, error = update_smart_filter(
+            playlist, filters=filters, sort=sort, limit=limit, libtype=libtype,
+            allow_empty_filter=allow_empty_filter)
+        if error:
+            raise ValueError(error)
+        return {**_smart_result(playlist), "definition_before": before}
     try:
         return json.dumps(await asyncio.to_thread(run))
     except Exception as exc:

@@ -11,23 +11,29 @@ class SmartPlaylistTests(unittest.IsolatedAsyncioTestCase):
         content, _ = await mcp.call_tool(name, args)
         return json.loads(content[0].text)
 
-    async def test_edit_preserves_type_filters_sort_and_limit_when_omitted(self):
+    async def test_edit_hands_omitted_settings_to_the_preserving_update(self):
         selected = Mock()
         target = Mock(smart=True, ratingKey=42, key="/playlists/42")
-        definition = {"libtype": "show", "filters": {"show.title": "Band of Brothers"},
-                      "sort": ["show.titleSort:asc"], "limit": 3}
-        target.filters.return_value = definition
         selected.playlists.return_value = [target]
-        selected._uriRoot.return_value = "server://example/com.plexapp.plugins.library"
-        section = target.section.return_value
-        section._buildSearchKey.return_value = "/library/sections/1/all?type=2"
-        with patch.object(playlist, "connect_to_plex"), patch.object(playlist, "server_for_user", return_value=selected), patch.object(playlist, "_smart_result", return_value={"status": "success"}):
-            result = await self.call("playlist_edit_smart_filters", {"playlist_id": 42, "username": "Target"})
-            self.assertEqual(result["status"], "success")
-            section._buildSearchKey.assert_called_once_with(libtype="show", filters=definition["filters"], sort=definition["sort"], limit=3)
+        before = {"libtype": "show", "filters": {"show.title": "Band of Brothers"}}
+        with patch.object(playlist, "connect_to_plex"), \
+                patch.object(playlist, "server_for_user", return_value=selected), \
+                patch.object(playlist, "_smart_result", return_value={"status": "success"}), \
+                patch.object(playlist, "update_smart_filter", return_value=(before, before, None)) as update:
+            result = await self.call("playlist_edit_smart_filters", {"playlist_id": 42, "username": "Target", "sort": "year:desc"})
+            self.assertEqual(result, {"status": "success", "definition_before": before})
+            update.assert_called_once_with(target, filters=None, sort="year:desc", limit=None,
+                                           libtype=None, allow_empty_filter=False)
             target.updateFilters.assert_not_called()
-            result = await self.call("playlist_edit_smart_filters", {"playlist_id": 42, "username": "Target", "filters": {}, "sort": "", "limit": 0, "libtype": "episode"})
-            section._buildSearchKey.assert_called_with(libtype="episode", filters={}, sort=None, limit=None)
+
+    async def test_edit_reports_a_refused_write(self):
+        selected = Mock()
+        selected.playlists.return_value = [Mock(smart=True, ratingKey=42)]
+        with patch.object(playlist, "connect_to_plex"), \
+                patch.object(playlist, "server_for_user", return_value=selected), \
+                patch.object(playlist, "update_smart_filter", return_value=({}, None, "Refusing to save")):
+            result = await self.call("playlist_edit_smart_filters", {"playlist_id": 42, "filters": {}})
+            self.assertEqual(result, {"status": "error", "message": "Refusing to save"})
 
     async def test_all_tools_report_user_access_failures(self):
         calls = {
