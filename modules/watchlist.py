@@ -1,5 +1,6 @@
 """Account Watchlist access through Plex Discover, including non-library titles."""
 
+from mcp.types import ToolAnnotations  # type: ignore
 import asyncio
 import json
 import os
@@ -214,7 +215,7 @@ def _error(exc):
     return json.dumps({"status": "error", "message": message})
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 @_with_home_profile
 async def watchlist_list(offset: int = 0, limit: int = 50, home_user_id: int = None, pin: str = None, username: str = None, include_state: bool = True) -> str:
     """List the PLEX_TOKEN account's Watchlist, including titles outside the library.
@@ -243,7 +244,7 @@ async def watchlist_list(offset: int = 0, limit: int = 50, home_user_id: int = N
         return _error(exc)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 @_with_home_profile
 async def watchlist_search(query: str, content_type: str = None, limit: int = 20, home_user_id: int = None, pin: str = None, username: str = None) -> str:
     """Search Plex Discover for movie/show GUIDs to add to the Watchlist.
@@ -294,7 +295,7 @@ async def _set(guid, desired):
         return _error(exc)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 @_with_home_profile
 async def watchlist_add(guid: str, home_user_id: int = None, pin: str = None, username: str = None) -> str:
     """Add a movie/show GUID from watchlist_search to the PLEX_TOKEN account's Watchlist.
@@ -307,7 +308,7 @@ async def watchlist_add(guid: str, home_user_id: int = None, pin: str = None, us
     return await _set(guid, True)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 @_with_home_profile
 async def watchlist_remove(guid: str, home_user_id: int = None, pin: str = None, username: str = None) -> str:
     """Remove a GUID returned by watchlist_list from the PLEX_TOKEN account's Watchlist.

@@ -1,3 +1,4 @@
+from mcp.types import ToolAnnotations  # type: ignore
 from modules import mcp, connect_to_plex
 from modules.profiles import server_for_user
 import asyncio
@@ -7,7 +8,7 @@ import base64
 import os
 import json
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def media_search(query: str, content_type: str = None) -> str:
     """Search for media across all libraries.
     
@@ -205,7 +206,7 @@ async def media_search(query: str, content_type: str = None) -> str:
             "message": f"Error searching: {str(e)}"
         })
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def media_get_details(media_title: str = None, media_id: int = None, library_name: str = None, username: str = None) -> str:
     """Get detailed information about a specific media item using PlexAPI's Media and Mixin functions.
     
@@ -571,7 +572,7 @@ def _watch_state(media):
     return {"watched": status == "watched", "watch_status": status,
             "watched_count": watched_count, "total_count": total_count}
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def media_set_watched_status(media_id: int, watched: bool, username: str = None) -> str:
     """Mark a Plex media item as watched or unwatched.
 
@@ -633,7 +634,7 @@ async def media_set_watched_status(media_id: int, watched: bool, username: str =
             "message": f"Error setting watched status for media ID {media_id}: {str(e)}"
         }, indent=2)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def media_edit_metadata(media_title: str, library_name: str = None, 
                         new_title: str = None, new_summary: str = None, new_rating: float = None,
                         new_release_date: str = None,  # Add this parameter
@@ -793,7 +794,7 @@ async def media_edit_metadata(media_title: str, library_name: str = None,
     except Exception as e:
         return f"Error editing metadata: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def media_get_artwork(media_title: str = None, media_id: int = None, library_name: str = None,
                          image_types: List[str] = ["poster"], output_format: str = "base64",
                          output_dir: str = "./") -> str:
@@ -953,7 +954,7 @@ async def media_get_artwork(media_title: str = None, media_id: int = None, libra
     except Exception as e:
         return json.dumps({"error": f"Error getting images: {str(e)}"}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def media_delete(media_title: str = None, media_id: int = None, library_name: str = None) -> str:
     """Delete a media item from the Plex library.
     
@@ -1127,7 +1128,7 @@ async def media_delete(media_title: str = None, media_id: int = None, library_na
     except Exception as e:
         return json.dumps({"error": f"Error deleting media: {str(e)}"}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def media_set_artwork(media_title: str, library_name: str = None,
                           art_type: str = "poster", 
                           filepath: str = None, url: str = None,
@@ -1219,7 +1220,7 @@ async def media_set_artwork(media_title: str, library_name: str = None,
     except Exception as e:
         return f"Error setting {art_type} artwork: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def media_list_available_artwork(media_title: str = None, media_id: int = None, library_name: str = None, art_type: str = "poster") -> str:
     """List all available artwork for a specific media item.
     

@@ -1,3 +1,4 @@
+from mcp.types import ToolAnnotations  # type: ignore
 from plexapi.collection import Collection # type: ignore
 from typing import List, Dict, Any
 from modules import mcp, connect_to_plex
@@ -5,7 +6,7 @@ import os
 from plexapi.exceptions import NotFound, BadRequest  # type: ignore
 import json
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def collection_list(library_name: str = None) -> str:
     """List all collections on the Plex server or in a specific library.
     
@@ -92,7 +93,7 @@ async def collection_list(library_name: str = None) -> str:
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
 async def collection_create(collection_title: str, library_name: str, item_titles: List[str] = None, item_ids: List[int] = None) -> str:
     """Create a new collection with specified items.
     
@@ -198,7 +199,7 @@ async def collection_create(collection_title: str, library_name: str, item_title
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def collection_add_to(collection_title: str = None, collection_id: int = None, library_name: str = None, item_titles: List[str] = None, item_ids: List[int] = None) -> str:
     """Add items to an existing collection.
     
@@ -388,7 +389,7 @@ async def collection_add_to(collection_title: str = None, collection_id: int = N
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def collection_remove_from(collection_title: str = None, collection_id: int = None, library_name: str = None, item_titles: List[str] = None) -> str:
     """Remove items from a collection.
     
@@ -516,7 +517,7 @@ async def collection_remove_from(collection_title: str = None, collection_id: in
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def collection_delete(collection_title: str = None, collection_id: int = None, library_name: str = None) -> str:
     """Delete a collection.
     
@@ -614,7 +615,7 @@ async def collection_delete(collection_title: str = None, collection_id: int = N
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def collection_edit(collection_title: str = None, collection_id: int = None, library_name: str = None, 
                       new_title: str = None, new_sort_title: str = None,
                       new_summary: str = None, new_content_rating: str = None,

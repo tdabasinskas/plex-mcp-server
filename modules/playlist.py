@@ -1,3 +1,4 @@
+from mcp.types import ToolAnnotations  # type: ignore
 from modules import mcp, connect_to_plex
 from modules.profiles import server_for_user
 from typing import List, Optional
@@ -17,7 +18,7 @@ def _playlist_by_id(plex, playlist_id):
 
 
 # Functions for playlists and collections
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def playlist_list(library_name: str = None, content_type: str = None, username: str = None) -> str:
     """List all playlists on the Plex server.
     
@@ -76,7 +77,7 @@ async def playlist_list(library_name: str = None, content_type: str = None, user
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
 async def playlist_create(playlist_title: str, item_titles: List[str], library_name: str = None, summary: str = None, username: str = None) -> str:
     """Create a new playlist with specified items.
     
@@ -125,7 +126,7 @@ async def playlist_create(playlist_title: str, item_titles: List[str], library_n
     except Exception as e:
         return json.dumps({"status": "error", "message": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def playlist_edit(playlist_title: str = None, playlist_id: int = None, new_title: str = None, new_summary: str = None, username: str = None) -> str:
     """Edit a playlist's details such as title and summary.
     
@@ -218,7 +219,7 @@ async def playlist_edit(playlist_title: str = None, playlist_id: int = None, new
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def playlist_upload_poster(playlist_title: str = None, playlist_id: int = None, poster_url: str = None, poster_filepath: str = None, username: str = None) -> str:
     """Upload a poster image for a playlist.
     
@@ -318,7 +319,7 @@ async def playlist_upload_poster(playlist_title: str = None, playlist_id: int = 
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
 async def playlist_copy_to_user(playlist_title: str = None, playlist_id: int = None, username: str = None, source_username: str = None) -> str:
     """Copy a playlist to another user account.
     
@@ -395,7 +396,7 @@ async def playlist_copy_to_user(playlist_title: str = None, playlist_id: int = N
     except Exception as e:
         return json.dumps({"status": "error", "message": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
 async def playlist_add_to(playlist_title: str = None, playlist_id: int = None, item_titles: List[str] = None, item_ids: List[int] = None, username: str = None) -> str:
     """Add items to a playlist.
     
@@ -548,7 +549,7 @@ async def playlist_add_to(playlist_title: str = None, playlist_id: int = None, i
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def playlist_remove_from(playlist_title: str = None, playlist_id: int = None, item_titles: List[str] = None, username: str = None) -> str:
     """Remove items from a playlist.
     
@@ -658,7 +659,7 @@ async def playlist_remove_from(playlist_title: str = None, playlist_id: int = No
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def playlist_delete(playlist_title: str = None, playlist_id: int = None, username: str = None) -> str:
     """Delete a playlist.
     
@@ -731,7 +732,7 @@ async def playlist_delete(playlist_title: str = None, playlist_id: int = None, u
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def playlist_get_contents(playlist_title: str = None, playlist_id: int = None, username: str = None) -> str:
     """Get the contents of a playlist.
     
@@ -887,7 +888,7 @@ def _smart_error(exc):
     return json.dumps({"status": "error", "message": message})
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def playlist_get_smart_filter_options(library_name: str, field: Optional[str] = None,
                                           libtype: Optional[str] = None, username: Optional[str] = None) -> str:
     """Discover fields, operators, sort options or field choices for smart playlists.
@@ -920,7 +921,7 @@ async def playlist_get_smart_filter_options(library_name: str, field: Optional[s
         return _smart_error(exc)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
 async def playlist_create_smart(playlist_title: str, library_name: str, filters: Optional[dict] = None,
                                 sort: Optional[str] = None, limit: Optional[int] = None,
                                 libtype: Optional[str] = None, summary: Optional[str] = None,
@@ -962,7 +963,7 @@ async def playlist_create_smart(playlist_title: str, library_name: str, filters:
         return _smart_error(exc)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def playlist_edit_smart_filters(playlist_title: Optional[str] = None, playlist_id: Optional[int] = None,
                                       filters: Optional[dict] = None, sort: Optional[str] = None,
                                       limit: Optional[int] = None, libtype: Optional[str] = None,

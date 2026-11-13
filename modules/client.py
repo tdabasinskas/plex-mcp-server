@@ -2,6 +2,7 @@
 Client-related functions for Plex Media Server.
 Provides tools to connect to clients and control media playback.
 """
+from mcp.types import ToolAnnotations  # type: ignore
 import json
 import time
 import asyncio
@@ -102,7 +103,7 @@ def _find_client(plex, client_identifier: str) -> Tuple[Optional[Any], Optional[
     
     return None, session, None
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def client_list(include_details: bool = True, active_only: bool = False) -> str:
     """List all available Plex clients including idle players.
     
@@ -222,7 +223,7 @@ async def client_list(include_details: bool = True, active_only: bool = False) -
             "message": f"Error listing clients: {str(e)}"
         })
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def client_get_details(client_name: str) -> str:
     """Get detailed information about a specific Plex client.
     
@@ -294,7 +295,7 @@ async def client_get_details(client_name: str) -> str:
             "message": f"Error getting client details: {str(e)}"
         })
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def client_get_timelines(client_name: str) -> str:
     """Get the current timeline information for a specific Plex client.
     
@@ -423,7 +424,7 @@ async def client_get_timelines(client_name: str) -> str:
             "message": f"Error getting client timeline: {str(e)}"
         })
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
 async def client_start_playback(media_title: str = None, client_name: str = None, 
                         offset: int = 0, library_name: str = None, 
                         use_external_player: bool = False,
@@ -630,7 +631,7 @@ async def client_start_playback(media_title: str = None, client_name: str = None
             "message": f"Error setting up playback: {str(e)}"
         })
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
 async def client_control_playback(client_name: str, action: str, 
                          parameter: int = None, media_type: str = 'video') -> str:
     """Control playback on a specified client.
@@ -817,7 +818,7 @@ async def client_control_playback(client_name: str, action: str,
             "message": f"Error setting up playback control: {str(e)}"
         })
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
 async def client_navigate(client_name: str, action: str) -> str:
     """Navigate a Plex client interface.
     
@@ -901,7 +902,7 @@ async def client_navigate(client_name: str, action: str) -> str:
             "message": f"Error setting up client navigation: {str(e)}"
         })
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def client_set_streams(client_name: str, audio_stream_id: str = None, 
                     subtitle_stream_id: str = None, video_stream_id: str = None) -> str:
     """Set audio, subtitle, or video streams for current playback on a client.
