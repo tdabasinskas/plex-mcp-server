@@ -602,6 +602,8 @@ async def library_get_contents(
         title: Case-insensitive Plex title search, not exact-only or arbitrary substring matching.
             Searches names of the selected media_type; TV libraries default to show names.
             Applied before pagination and combined with the other filters.
+            It matches the items' own names only: an album's title, not its artist. To count or list
+            an artist's albums, use media_get_details with media_title=<artist> and libtype='artist'.
         genre: Filter by genre tag (parent show genre for episodes).
         year: Filter by release year (parent album year for tracks).
         content_rating: Filter by content rating (e.g., 'PG-13')
