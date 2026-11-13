@@ -30,7 +30,7 @@ async def async_get_json(session, url, headers):
             raise Exception(f"Plex API error {status}: {error_msg}")
         return await response.json()
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def library_list() -> str:
     """List all available libraries on the Plex server."""
     try:
@@ -55,7 +55,7 @@ async def library_list() -> str:
     except Exception as e:
         return json.dumps({"error": f"Error listing libraries: {str(e)}"})
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def library_get_stats(library_name: str) -> str:
     """Get statistics for a specific library.
     
@@ -298,7 +298,7 @@ async def library_get_stats(library_name: str) -> str:
     except Exception as e:
         return json.dumps({"error": f"Error getting library stats: {str(e)}"})
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def library_refresh(library_name: Optional[str] = None) -> str:
     """Refresh a specific library or all libraries.
     
@@ -332,7 +332,7 @@ async def library_refresh(library_name: Optional[str] = None) -> str:
     except Exception as e:
         return json.dumps({"error": f"Error refreshing library: {str(e)}"})
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def library_scan(library_name: str, path: Optional[str] = None) -> str:
     """Scan a specific library or part of a library.
     
@@ -369,7 +369,7 @@ async def library_scan(library_name: str, path: Optional[str] = None) -> str:
     except Exception as e:
         return json.dumps({"error": f"Error scanning library: {str(e)}"})
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def library_get_details(library_name: str) -> str:
     """Get detailed information about a specific library, including folder paths and settings.
     
@@ -438,7 +438,7 @@ async def library_get_details(library_name: str) -> str:
     except Exception as e:
         return json.dumps({"error": f"Error getting library details: {str(e)}"})
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def library_get_recently_added(count: int = 50, library_name: Optional[str] = None) -> str:
     """Get recently added media across all libraries or in a specific library.
     
@@ -566,7 +566,7 @@ async def library_get_recently_added(count: int = 50, library_name: Optional[str
     except Exception as e:
         return json.dumps({"error": f"Error getting recently added items: {str(e)}"})
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def library_get_contents(
     library_name: Optional[str] = None,
     unwatched: bool = False, 
@@ -929,7 +929,7 @@ def _operator_suffix(operator):
     }
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def library_get_smart_filter_options(library_name: str, field: str = None, libtype: str = None) -> str:
     """Discover the filter and sort options for building a smart playlist or smart collection in a library.
 

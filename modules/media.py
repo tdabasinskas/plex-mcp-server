@@ -126,7 +126,7 @@ def _show_ref(show, media_id):
     return {"id": getattr(show, "ratingKey", media_id), "title": getattr(show, "title", None)}
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def media_get_episodes(
     media_id: int,
     watched: Optional[bool] = None,
@@ -188,7 +188,7 @@ async def media_get_episodes(
     }, indent=2)
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def media_get_next_unwatched_episode(
     media_id: int, ignore_specials: bool = True, username: Optional[str] = None
 ) -> str:
@@ -227,7 +227,7 @@ async def media_get_next_unwatched_episode(
         response["message"] = "No aired unwatched episodes after the furthest watched one."
     return json.dumps(response, indent=2)
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def media_search(query: str, content_type: str = None) -> str:
     """Search for media across all libraries.
     
@@ -425,7 +425,7 @@ async def media_search(query: str, content_type: str = None) -> str:
             "message": f"Error searching: {str(e)}"
         })
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def media_get_details(media_title: str = None, media_id: int = None, library_name: str = None,
                             libtype: str = None, username: str = None) -> str:
     """Get detailed information about a specific media item using PlexAPI's Media and Mixin functions.
@@ -731,7 +731,7 @@ def _watch_state(media):
     return {"watched": status == "watched", "watch_status": status,
             "watched_count": watched_count, "total_count": total_count}
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def media_set_watched_status(media_id: int, watched: bool, username: str = None) -> str:
     """Mark a Plex media item as watched or unwatched.
 
@@ -793,7 +793,7 @@ async def media_set_watched_status(media_id: int, watched: bool, username: str =
             "message": f"Error setting watched status for media ID {media_id}: {str(e)}"
         }, indent=2)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def media_edit_metadata(media_title: str = None, media_id: int = None, library_name: str = None,
                         libtype: str = None,
                         new_title: str = None, new_summary: str = None, new_rating: float = None,
@@ -926,7 +926,7 @@ async def media_edit_metadata(media_title: str = None, media_id: int = None, lib
     except Exception as e:
         return json.dumps({"error": f"Error editing metadata: {str(e)}"}, indent=4)
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def media_get_artwork(media_title: str = None, media_id: int = None, library_name: str = None,
                          libtype: str = None,
                          image_types: List[str] = ["poster"], output_format: str = "base64",
@@ -1051,7 +1051,7 @@ async def media_get_artwork(media_title: str = None, media_id: int = None, libra
     except Exception as e:
         return json.dumps({"error": f"Error getting images: {str(e)}"}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def media_delete(media_title: str = None, media_id: int = None, library_name: str = None,
                        libtype: str = None) -> str:
     """Delete a media item from the Plex library.
@@ -1103,7 +1103,7 @@ async def media_delete(media_title: str = None, media_id: int = None, library_na
     except Exception as e:
         return json.dumps({"error": f"Error deleting media: {str(e)}"}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def media_set_artwork(media_title: str = None, media_id: int = None, library_name: str = None,
                           libtype: str = None, art_type: str = "poster",
                           filepath: str = None, url: str = None,
@@ -1193,7 +1193,7 @@ async def media_set_artwork(media_title: str = None, media_id: int = None, libra
     except Exception as e:
         return json.dumps({"error": f"Error setting {art_type} artwork: {str(e)}"}, indent=4)
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def media_list_available_artwork(media_title: str = None, media_id: int = None,
                                        library_name: str = None, libtype: str = None,
                                        art_type: str = "poster") -> str:

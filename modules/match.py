@@ -53,7 +53,7 @@ def _serialize_candidate(result):
     }
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def media_get_match(media_title: str = None, media_id: int = None, library_name: str = None,
                           libtype: str = None,
                           search_title: str = None, search_year: int = None,
@@ -122,7 +122,7 @@ async def media_get_match(media_title: str = None, media_id: int = None, library
         return json.dumps({"error": f"Error getting match info: {str(e)}"}, indent=4)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def media_fix_match(media_title: str = None, media_id: int = None, library_name: str = None,
                           libtype: str = None,
                           guid: str = None, auto: bool = False,
@@ -210,7 +210,7 @@ async def media_fix_match(media_title: str = None, media_id: int = None, library
         return json.dumps({"error": f"Error fixing match: {str(e)}"}, indent=4)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def media_unmatch(media_title: str = None, media_id: int = None, library_name: str = None,
                         libtype: str = None) -> str:
     """Remove the current metadata match from a media item, leaving it unmatched.
