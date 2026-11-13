@@ -445,6 +445,9 @@ async def media_get_details(media_title: str = None, media_id: int = None, libra
     in_progress and progress_percent for the selected user. Saved progress is not live playback.
     Show, season, album and artist results include watched, watch_status (watched/partial/unwatched),
     watched_count and total_count.
+
+    An artist result (libtype='artist') also has albums_count, tracks_count and the artist's albums,
+    so this is the way to count or list what an artist has in the library.
     """
     try:
         plex = await asyncio.to_thread(lambda: server_for_user(connect_to_plex(), username=username))
