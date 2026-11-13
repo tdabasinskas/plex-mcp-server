@@ -11,7 +11,7 @@ import json
 # so large collections don't overflow a response.
 DEFAULT_CONTENTS_PAGE = 200
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def collection_list(library_name: str = None) -> str:
     """List all collections on the Plex server or in a specific library.
     
@@ -110,7 +110,7 @@ async def collection_list(library_name: str = None) -> str:
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
 async def collection_create(collection_title: str, library_name: str, item_titles: List[str] = None, item_ids: List[int] = None) -> str:
     """Create a new collection with specified items.
     
@@ -216,7 +216,7 @@ async def collection_create(collection_title: str, library_name: str, item_title
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def collection_add_to(collection_title: str = None, collection_id: int = None, library_name: str = None, item_titles: List[str] = None, item_ids: List[int] = None) -> str:
     """Add items to an existing collection.
     
@@ -406,7 +406,7 @@ async def collection_add_to(collection_title: str = None, collection_id: int = N
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def collection_remove_from(collection_title: str = None, collection_id: int = None, library_name: str = None, item_titles: List[str] = None) -> str:
     """Remove items from a collection.
     
@@ -534,7 +534,7 @@ async def collection_remove_from(collection_title: str = None, collection_id: in
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def collection_delete(collection_title: str = None, collection_id: int = None, library_name: str = None) -> str:
     """Delete a collection.
     
@@ -632,7 +632,7 @@ async def collection_delete(collection_title: str = None, collection_id: int = N
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def collection_edit(collection_title: str = None, collection_id: int = None, library_name: str = None, 
                       new_title: str = None, new_sort_title: str = None,
                       new_summary: str = None, new_content_rating: str = None,
@@ -874,7 +874,7 @@ def _resolve_collection(plex, collection_title=None, collection_id=None, library
     return matching[0], None
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
 async def collection_create_smart(collection_title: str, library_name: str, filters: dict = None,
                                   sort: str = None, limit: int = None, libtype: str = None,
                                   summary: str = None) -> str:
@@ -954,7 +954,7 @@ async def collection_create_smart(collection_title: str, library_name: str, filt
         return json.dumps({"status": "error", "message": str(e)}, indent=4)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def collection_edit_smart_filters(collection_title: str = None, collection_id: int = None,
                                         library_name: str = None, filters: dict = None,
                                         sort: str = None, limit: int = None, libtype: str = None,
@@ -1124,7 +1124,7 @@ def get_collection_contents(collection, offset=0, limit=None, include_items=True
         return json.dumps({"error": f"Error formatting collection contents: {str(e)}"}, indent=4)
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def collection_get_contents(collection_title: str = None, collection_id: int = None,
                                   library_name: str = None, limit: int = None, offset: int = 0,
                                   include_items: bool = True) -> str:

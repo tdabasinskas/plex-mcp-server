@@ -6,7 +6,7 @@ import json
 import asyncio
 import requests
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def server_get_plex_logs(num_lines: int = 100, log_type: str = "server", start_line: int = None, list_files: bool = False, search_term: str = None) -> str:
     """Get Plex server logs.
     
@@ -180,7 +180,7 @@ async def server_get_plex_logs(num_lines: int = 100, log_type: str = "server", s
     except Exception as e:
         return f"Error getting Plex logs: {str(e)}\n{traceback.format_exc()}"
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def server_get_info() -> str:
     """Get detailed information about the Plex server.
     
@@ -214,7 +214,7 @@ async def server_get_info() -> str:
     except Exception as e:
         return json.dumps({"status": "error", "message": str(e)}, indent=4)
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def server_get_bandwidth(timespan: str = None, lan: str = None) -> str:
     """Get bandwidth statistics from the Plex server.
     
@@ -271,7 +271,7 @@ async def server_get_bandwidth(timespan: str = None, lan: str = None) -> str:
     except Exception as e:
         return json.dumps({"status": "error", "message": str(e)}, indent=4)
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def server_get_current_resources() -> str:
     """Get resource usage information from the Plex server.
     
@@ -304,7 +304,7 @@ async def server_get_current_resources() -> str:
     except Exception as e:
         return json.dumps({"status": "error", "message": str(e)}, indent=4)
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def server_get_butler_tasks() -> str:
     """Get information about Plex Butler tasks.
     
@@ -375,7 +375,7 @@ async def server_get_butler_tasks() -> str:
             "traceback": traceback.format_exc()
         }, indent=4)
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def server_get_alerts(timeout: int = 15) -> str:
     """Get real-time alerts from the Plex server by listening on a websocket.
     
@@ -444,7 +444,7 @@ async def server_get_alerts(timeout: int = 15) -> str:
     except Exception as e:
         return json.dumps({"status": "error", "message": str(e)}, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
 async def server_run_butler_task(task_name: str) -> str:
     """Manually run a specific Plex Butler task now.
     
@@ -513,7 +513,7 @@ async def server_run_butler_task(task_name: str) -> str:
             "traceback": traceback.format_exc()
         }, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def server_empty_trash(library_name: str = None) -> str:
     """Empty trash for a specific library or all libraries.
     
@@ -564,7 +564,7 @@ async def server_empty_trash(library_name: str = None) -> str:
             "message": f"Error emptying trash: {str(e)}"
         }, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def server_optimize_database() -> str:
     """Optimize the Plex database.
     
@@ -590,7 +590,7 @@ async def server_optimize_database() -> str:
             "message": f"Error optimizing database: {str(e)}"
         }, indent=4)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True))
 async def server_clean_bundles() -> str:
     """Clean unused media bundles.
     
